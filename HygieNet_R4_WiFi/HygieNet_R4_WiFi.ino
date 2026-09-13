@@ -1,6 +1,11 @@
 // ============================================================
 //  HygieNet Cloud Edition — Arduino UNO R4 WiFi Firmware
-//  ALL-IN-ONE STANDALONE SKETCH (No separate config.h needed!)
+//  Includes Built-in SERIAL MONITOR SIMULATOR:
+//  - Type '1' for Sunita Yadav (C3:27:87:14)
+//  - Type '2' for Anita Kumari (E3:A5:AE:02)
+//  - Type '3' for Invalid Card (D7:EE:26:03)
+//  - Type 'SCAN <UID>' for custom card
+//  - Type '+' to increment, '-' to decrement, 'OK' to confirm!
 // ============================================================
 
 #include <WiFiS3.h>
@@ -65,6 +70,7 @@ bool confirmDispenseWithCloud(const String& uid, int quantity, int& outRemaining
 void runDispenserSequence(int quantity);
 String readHttpResponse(Client& client);
 String extractJsonValue(const String& json, const String& key);
+void printSerialHelp();
 
 // ------------------------------------------------------------
 //  SETUP
@@ -88,68 +94,97 @@ void setup() {
     Serial.println("[OLED] Warning: SSD1306 not found on 0x3C");
   }
 
-  // 2. Buttons Init (Active-LOW with Internal Pullups)
+  // 2. Buttons Init
   pinMode(PIN_BTN_INC, INPUT_PULLUP);
   pinMode(PIN_BTN_DEC, INPUT_PULLUP);
   pinMode(PIN_BTN_CONF, INPUT_PULLUP);
-  Serial.println("[Buttons] Pins A0, A1, A2 set to INPUT_PULLUP");
 
   // 3. Servos Init
   armServo.attach(PIN_SERVO_ARM);
   gateServo.attach(PIN_SERVO_GATE);
   armServo.write(0);
   gateServo.write(0);
-  Serial.println("[Servos] Attached and homed to 0 deg");
 
   // 4. MFRC522 RFID Init
   SPI.begin();
   rfid.PCD_Init();
-  delay(50);
-  Serial.println("[RFID] PCD Initialized");
 
   // 5. Connect to Wi-Fi Hotspot
   connectWiFi();
 
+  // Print Serial Simulator Help Instructions
+  printSerialHelp();
+
   // 6. Ready State
   showOled("HYGIENET", "READY", "SCAN RFID CARD");
+}
+
+void printSerialHelp() {
+  Serial.println("\n--- [SERIAL SIMULATOR CONTROLS] ---");
+  Serial.println(" Type '1'  -> Tap Sunita Yadav (C3:27:87:14)");
+  Serial.println(" Type '2'  -> Tap Anita Kumari (E3:A5:AE:02)");
+  Serial.println(" Type '3'  -> Tap Invalid Card (D7:EE:26:03)");
+  Serial.println(" Type '+'  -> Increment quantity");
+  Serial.println(" Type '-'  -> Decrement quantity");
+  Serial.println(" Type 'OK' -> Confirm and dispense pads");
+  Serial.println("-----------------------------------\n");
 }
 
 // ------------------------------------------------------------
 //  MAIN LOOP
 // ------------------------------------------------------------
 void loop() {
-  // Auto-reconnect Wi-Fi if dropped
   if (WiFi.status() != WL_CONNECTED) {
     connectWiFi();
   }
 
-  // Periodic heartbeat telemetry
   if (millis() - lastPingTime > PING_INTERVAL) {
     lastPingTime = millis();
     sendHeartbeat();
   }
 
-  // Check for RFID Card
-  if (!rfid.PICC_IsNewCardPresent() || !rfid.PICC_ReadCardSerial()) {
-    return;
-  }
-
-  // Extract UID (format: C3:27:87:14)
   String uid = "";
-  for (byte i = 0; i < rfid.uid.size; i++) {
-    if (rfid.uid.uidByte[i] < 0x10) uid += "0";
-    uid += String(rfid.uid.uidByte[i], HEX);
-    if (i < rfid.uid.size - 1) uid += ":";
-  }
-  uid.toUpperCase();
 
-  Serial.println("\n[RFID] Card Detected: " + uid);
+  // 1. Check Physical RFID Card
+  if (rfid.PICC_IsNewCardPresent() && rfid.PICC_ReadCardSerial()) {
+    for (byte i = 0; i < rfid.uid.size; i++) {
+      if (rfid.uid.uidByte[i] < 0x10) uid += "0";
+      uid += String(rfid.uid.uidByte[i], HEX);
+      if (i < rfid.uid.size - 1) uid += ":";
+    }
+    uid.toUpperCase();
+    rfid.PICC_HaltA();
+    rfid.PCD_StopCrypto1();
+    Serial.println("\n[Physical RFID] Card Scanned: " + uid);
+  }
+
+  // 2. Check Serial Monitor Simulator Input
+  if (uid == "" && Serial.available()) {
+    String cmd = Serial.readStringUntil('\n');
+    cmd.trim();
+    cmd.toUpperCase();
+
+    if (cmd == "1" || cmd == "SUNITA") {
+      uid = "C3:27:87:14";
+      Serial.println("\n[Serial Simulator] Tapped Card: Sunita Yadav (C3:27:87:14)");
+    } else if (cmd == "2" || cmd == "ANITA") {
+      uid = "E3:A5:AE:02";
+      Serial.println("\n[Serial Simulator] Tapped Card: Anita Kumari (E3:A5:AE:02)");
+    } else if (cmd == "3" || cmd == "INVALID") {
+      uid = "D7:EE:26:03";
+      Serial.println("\n[Serial Simulator] Tapped Card: Unregistered (D7:EE:26:03)");
+    } else if (cmd.startsWith("SCAN ")) {
+      uid = cmd.substring(5);
+      uid.trim();
+      Serial.println("\n[Serial Simulator] Custom Card Scanned: " + uid);
+    }
+  }
+
+  if (uid == "") return;
+
   showOled("VERIFYING", "PLEASE WAIT", "CHECKING CLOUD...", 1);
 
-  rfid.PICC_HaltA();
-  rfid.PCD_StopCrypto1();
-
-  // Verify Card with Vercel Cloud
+  // Cloud Authorization Call
   String userName = "";
   int remainingPads = 0;
   int maxSelectable = 0;
@@ -162,56 +197,58 @@ void loop() {
     showOled("ACCESS DENIED", errorMsg, "TRY AGAIN", 1);
     delay(3000);
     showOled("HYGIENET", "READY", "SCAN RFID CARD");
+    printSerialHelp();
     return;
   }
 
-  // Authorized: Enter Pad Selection Mode
-  Serial.println("[Cloud Auth] User: " + userName + " | Remaining: " + String(remainingPads));
+  Serial.println("[Cloud Auth] Authorized for: " + userName + " | Remaining: " + String(remainingPads));
+  Serial.println("--> Type '+' to increase, '-' to decrease, 'OK' to confirm!");
 
   int selectedQty = 1;
   bool confirmed = false;
-  unsigned long selectTimeout = millis() + 30000; // 30s timeout
+  unsigned long selectTimeout = millis() + 45000; // 45s timeout
 
   showOled(userName, "PADS: 1", "USE +/- & CONFIRM");
 
   while (!confirmed && millis() < selectTimeout) {
-    // Increment Button (+)
-    if (digitalRead(PIN_BTN_INC) == LOW) {
-      delay(60);
-      if (digitalRead(PIN_BTN_INC) == LOW) {
-        if (selectedQty < maxSelectable) {
-          selectedQty++;
-          Serial.println("[Selection] Qty: " + String(selectedQty));
-          showOled(userName, "PADS: " + String(selectedQty), "REMAINING: " + String(remainingPads));
-        }
-        while (digitalRead(PIN_BTN_INC) == LOW);
-        delay(50);
-      }
+    bool inc = (digitalRead(PIN_BTN_INC) == LOW);
+    bool dec = (digitalRead(PIN_BTN_DEC) == LOW);
+    bool conf = (digitalRead(PIN_BTN_CONF) == LOW);
+
+    // Read Serial commands as virtual buttons
+    if (Serial.available()) {
+      String scmd = Serial.readStringUntil('\n');
+      scmd.trim();
+      scmd.toUpperCase();
+      if (scmd == "+" || scmd == "INC") inc = true;
+      else if (scmd == "-" || scmd == "DEC") dec = true;
+      else if (scmd == "OK" || scmd == "CONF" || scmd == "CONFIRM") conf = true;
     }
 
-    // Decrement Button (-)
-    if (digitalRead(PIN_BTN_DEC) == LOW) {
-      delay(60);
-      if (digitalRead(PIN_BTN_DEC) == LOW) {
-        if (selectedQty > 1) {
-          selectedQty--;
-          Serial.println("[Selection] Qty: " + String(selectedQty));
-          showOled(userName, "PADS: " + String(selectedQty), "REMAINING: " + String(remainingPads));
-        }
-        while (digitalRead(PIN_BTN_DEC) == LOW);
-        delay(50);
+    if (inc) {
+      if (selectedQty < maxSelectable) {
+        selectedQty++;
+        Serial.println("[Selected Pads]: " + String(selectedQty) + " / " + String(remainingPads) + " available");
+        showOled(userName, "PADS: " + String(selectedQty), "REMAINING: " + String(remainingPads));
+      } else {
+        Serial.println("[Limit Alert]: Cannot select more than " + String(maxSelectable) + " pads!");
       }
+      delay(200);
     }
 
-    // Confirm Button
-    if (digitalRead(PIN_BTN_CONF) == LOW) {
-      delay(60);
-      if (digitalRead(PIN_BTN_CONF) == LOW) {
-        confirmed = true;
-        Serial.println("[Selection] Confirmed: " + String(selectedQty) + " pads");
-        while (digitalRead(PIN_BTN_CONF) == LOW);
-        delay(50);
+    if (dec) {
+      if (selectedQty > 1) {
+        selectedQty--;
+        Serial.println("[Selected Pads]: " + String(selectedQty) + " / " + String(remainingPads) + " available");
+        showOled(userName, "PADS: " + String(selectedQty), "REMAINING: " + String(remainingPads));
       }
+      delay(200);
+    }
+
+    if (conf) {
+      confirmed = true;
+      Serial.println("\n[Confirmed!]: Dispensing " + String(selectedQty) + " pads for " + userName);
+      delay(200);
     }
   }
 
@@ -220,6 +257,7 @@ void loop() {
     showOled("TIMEOUT", "CANCELLED", "SCAN AGAIN");
     delay(2000);
     showOled("HYGIENET", "READY", "SCAN RFID CARD");
+    printSerialHelp();
     return;
   }
 
@@ -233,19 +271,20 @@ void loop() {
     showOled("ERROR", "DISPENSE CANCEL", "PLEASE RETRY", 1);
     delay(3000);
     showOled("HYGIENET", "READY", "SCAN RFID CARD");
+    printSerialHelp();
     return;
   }
 
-  // Actuate Dual Servo Dispenser
+  Serial.println("[Dispense Approved!] Running Servos now...");
   showOled("DISPENSING", "PADS: " + String(selectedQty), "PLEASE COLLECT", 1);
   runDispenserSequence(selectedQty);
 
-  // Thank You Screen
+  Serial.println("[Transaction Complete] Remaining pads for " + userName + ": " + String(newRemaining));
   showOled("THANK YOU", "COLLECT PADS", "REMAINING: " + String(newRemaining), 1);
   delay(3500);
 
-  // Return to ready
   showOled("HYGIENET", "READY", "SCAN RFID CARD");
+  printSerialHelp();
 }
 
 // ------------------------------------------------------------
@@ -284,10 +323,8 @@ Client& getClient() {
 
 bool verifyCardWithCloud(const String& uid, String& outName, int& outRemaining, int& outMaxSelectable, String& outErrorMsg) {
   Client& client = getClient();
-  Serial.print("[HTTPS] Connecting to ");
-  Serial.print(SERVER_HOST);
-  Serial.print(":");
-  Serial.println(SERVER_PORT);
+  Serial.print("[HTTPS] Verifying UID with ");
+  Serial.println(SERVER_HOST);
 
   if (!client.connect(SERVER_HOST, SERVER_PORT)) {
     Serial.println("[HTTPS] Connection failed!");
@@ -310,8 +347,6 @@ bool verifyCardWithCloud(const String& uid, String& outName, int& outRemaining, 
 
   String response = readHttpResponse(client);
   client.stop();
-
-  Serial.println("[HTTPS Response] " + response);
 
   if (extractJsonValue(response, "authorized") == "true") {
     outName = extractJsonValue(response, "name");
@@ -375,26 +410,23 @@ void sendHeartbeat() {
   }
 }
 
-// ------------------------------------------------------------
-//  SERVO DISPENSER SEQUENCE
-// ------------------------------------------------------------
 void runDispenserSequence(int quantity) {
   for (int i = 1; i <= quantity; i++) {
-    Serial.println("[Dispenser] Dispensing Pad " + String(i) + " of " + String(quantity));
+    Serial.println("  -> Moving ARM servo 90 deg (dispense pad " + String(i) + ")");
     armServo.write(90);
     delay(1000);
+    Serial.println("  -> Opening GATE servo 90 deg");
     gateServo.write(90);
     delay(1000);
+    Serial.println("  -> Returning ARM to 0 deg");
     armServo.write(0);
     delay(1000);
+    Serial.println("  -> Closing GATE to 0 deg");
     gateServo.write(0);
     delay(1000);
   }
 }
 
-// ------------------------------------------------------------
-//  PARSING & OLED HELPERS
-// ------------------------------------------------------------
 String readHttpResponse(Client& client) {
   String response = "";
   unsigned long timeout = millis() + 6000;
