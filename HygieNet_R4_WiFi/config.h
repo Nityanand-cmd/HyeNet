@@ -18,7 +18,7 @@
 //  Example for Vercel: "your-hygienet.vercel.app"
 //  Example for local PC testing on same Wi-Fi: "192.168.1.5"
 // ------------------------------------------------------------
-#define SERVER_HOST     "your-hygienet.vercel.app"
+#define SERVER_HOST     "hye-net.vercel.app"
 
 // Set USE_SSL to true when connecting to Vercel (Port 443 HTTPS)
 // Set USE_SSL to false if testing locally with PC IP on Port 5000 HTTP
