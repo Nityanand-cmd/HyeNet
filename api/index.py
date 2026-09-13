@@ -10,9 +10,17 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, Response
 from dotenv import load_dotenv
 import backend.db as db
+
+try:
+    import api.static_content as static_content
+except ImportError:
+    try:
+        import static_content
+    except ImportError:
+        static_content = None
 
 load_dotenv(dotenv_path=BASE_DIR / ".env")
 
@@ -33,27 +41,26 @@ def verify_device_key(req):
     return header_key == DEVICE_KEY
 
 # ------------------------------------------------------------
-#  FRONTEND STATIC ROUTES
+#  FRONTEND STATIC ROUTES (IN-MEMORY ZERO-404 BUNDLE)
 # ------------------------------------------------------------
-
-def get_public_dir():
-    candidates = [
-        Path(__file__).resolve().parent / "public",
-        BASE_DIR / "public",
-        Path.cwd() / "public",
-        Path.cwd() / "api" / "public",
-        Path("/var/task/public"),
-        Path("/var/task/api/public"),
-    ]
-    for c in candidates:
-        if c.exists() and (c / "index.html").exists():
-            return c
-    return BASE_DIR / "public"
 
 @app.route("/")
 def index():
-    pub = get_public_dir()
-    return send_from_directory(str(pub), "index.html")
+    if static_content and hasattr(static_content, "INDEX_HTML"):
+        return Response(static_content.INDEX_HTML, mimetype="text/html")
+    return send_from_directory(str(BASE_DIR / "public"), "index.html")
+
+@app.route("/style.css")
+def style_css():
+    if static_content and hasattr(static_content, "STYLE_CSS"):
+        return Response(static_content.STYLE_CSS, mimetype="text/css")
+    return send_from_directory(str(BASE_DIR / "public"), "style.css")
+
+@app.route("/app.js")
+def app_js():
+    if static_content and hasattr(static_content, "APP_JS"):
+        return Response(static_content.APP_JS, mimetype="application/javascript")
+    return send_from_directory(str(BASE_DIR / "public"), "app.js")
 
 
 # ------------------------------------------------------------
@@ -211,11 +218,11 @@ def list_transactions():
 
 @app.route("/<path:path>")
 def static_proxy(path):
-    pub = get_public_dir()
-    file_path = pub / path
-    if file_path.exists() and file_path.is_file():
-        return send_from_directory(str(pub), path)
-    return send_from_directory(str(pub), "index.html")
+    if path == "style.css":
+        return style_css()
+    if path == "app.js":
+        return app_js()
+    return index()
 
 # ------------------------------------------------------------
 #  LOCAL LAUNCHER
