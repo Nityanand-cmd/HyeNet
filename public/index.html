@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HygieNet Cloud — IoT Sanitary Vending Machine Dashboard</title>
+  <meta name="description" content="Next-Gen Cloud IoT Sanitary Vending Machine Management System powered by Arduino UNO R4 WiFi, Vercel Serverless, and MongoDB Atlas.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Ambient background glow effects -->
+  <div class="ambient-glow glow-1"></div>
+  <div class="ambient-glow glow-2"></div>
+
+  <div class="app-shell">
+    <!-- Top Navigation Bar -->
+    <header class="top-nav">
+      <div class="brand-group">
+        <div class="brand-logo">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <div class="brand-title">HygieNet <span>Cloud</span></div>
+          <div class="brand-subtitle">IoT Rural Women's Sanitary Solution • MMMUT Gorakhpur</div>
+        </div>
+      </div>
+
+      <div class="nav-status-items">
+        <div class="status-pill" id="cloud-status-pill">
+          <span class="status-indicator-dot online"></span>
+          <span id="cloud-status-text">Cloud API Live</span>
+        </div>
+        <div class="status-pill" id="device-status-pill">
+          <span class="status-indicator-dot pulse-emerald"></span>
+          <span id="device-status-text">UNO R4 WiFi: Ready</span>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="btn-refresh" onclick="fetchDashboardData()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <polyline points="1 20 1 14 7 14"></polyline>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+          </svg>
+          Sync
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Content Container -->
+    <main class="main-container">
+      
+      <!-- Metrics Overview Cards -->
+      <section class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-header">
+            <span class="metric-label">Total Dispensed</span>
+            <div class="metric-icon icon-emerald">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path></svg>
+            </div>
+          </div>
+          <div class="metric-value" id="stat-total-dispensed">0</div>
+          <div class="metric-trend"><span class="trend-highlight">Pads</span> lifetime delivered</div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-header">
+            <span class="metric-label">Today's Transactions</span>
+            <div class="metric-icon icon-teal">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+            </div>
+          </div>
+          <div class="metric-value" id="stat-today-tx">0</div>
+          <div class="metric-trend"><span class="trend-highlight">Scans</span> logged today</div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-header">
+            <span class="metric-label">Beneficiaries</span>
+            <div class="metric-icon icon-cyan">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+            </div>
+          </div>
+          <div class="metric-value" id="stat-active-users">0</div>
+          <div class="metric-trend"><span class="trend-highlight">Registered</span> RFID cards</div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-header">
+            <span class="metric-label">Monthly Pad Limit</span>
+            <div class="metric-icon icon-indigo">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+            </div>
+          </div>
+          <div class="metric-value" id="stat-monthly-limit">5</div>
+          <div class="metric-trend"><span class="trend-highlight">Quota</span> per beneficiary / month</div>
+        </div>
+      </section>
+
+      <!-- Database & Architecture Banner -->
+      <section class="banner-card" id="db-status-banner">
+        <div class="banner-content">
+          <div class="banner-badge" id="db-badge">MongoDB Atlas Cloud</div>
+          <div class="banner-title" id="db-title">Cloud Storage Connected</div>
+          <div class="banner-desc" id="db-desc">Synchronized in real-time with MongoDB Atlas cluster. Vercel serverless authorization engine is active.</div>
+        </div>
+        <div class="banner-actions">
+          <button class="btn btn-primary btn-sm" id="btn-open-simulator" onclick="toggleSimulator()">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+            Hardware & RFID Simulator
+          </button>
+        </div>
+      </section>
+
+      <!-- Interactive Hardware Simulator (Drawer/Card) -->
+      <section class="simulator-section card-glass hidden" id="simulator-container">
+        <div class="simulator-header">
+          <div class="simulator-title-group">
+            <span class="badge badge-emerald">Interactive Testbed</span>
+            <h3>Arduino UNO R4 WiFi & Dispenser Simulator</h3>
+            <p>Test RFID card authentication, quota calculation, button selection, and dual-servo dispensing live in your browser.</p>
+          </div>
+          <button class="btn-icon" onclick="toggleSimulator()" title="Close Simulator">✕</button>
+        </div>
+
+        <div class="simulator-body">
+          <!-- Left: Virtual Machine Display & Controls -->
+          <div class="virtual-device">
+            <div class="oled-frame">
+              <div class="oled-glass" id="sim-oled">
+                <div class="oled-line-1" id="sim-oled-line1">HYGIENET R4</div>
+                <div class="oled-line-2" id="sim-oled-line2">READY TO SCAN</div>
+                <div class="oled-line-3" id="sim-oled-line3">TAP RFID CARD</div>
+              </div>
+            </div>
+
+            <div class="virtual-buttons">
+              <button class="btn-hw" id="hw-btn-inc" onclick="simAdjustQty(1)" title="Increment Quantity (+)">+</button>
+              <button class="btn-hw" id="hw-btn-dec" onclick="simAdjustQty(-1)" title="Decrement Quantity (-)">−</button>
+              <button class="btn-hw btn-hw-confirm" id="hw-btn-conf" onclick="simConfirmDispense()" title="Confirm Dispense">CONFIRM</button>
+            </div>
+
+            <!-- Virtual Servos Animation -->
+            <div class="servos-visualization">
+              <div class="servo-item">
+                <div class="servo-label">ARM SERVO (Pin A3)</div>
+                <div class="servo-track"><div class="servo-indicator" id="sim-servo-arm"></div></div>
+              </div>
+              <div class="servo-item">
+                <div class="servo-label">GATE SERVO (Pin 8)</div>
+                <div class="servo-track"><div class="servo-indicator" id="sim-servo-gate"></div></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right: Quick Tap Presets -->
+          <div class="simulator-controls">
+            <h4 class="subheading">Quick Tap Test Cards</h4>
+            <div class="test-cards-list">
+              <button class="test-card-btn" onclick="simTapCard('C3:27:87:14')">
+                <div class="test-card-name">Sunita Yadav</div>
+                <div class="test-card-uid">UID: C3:27:87:14</div>
+                <span class="badge badge-emerald">Registered (5/mo)</span>
+              </button>
+              <button class="test-card-btn" onclick="simTapCard('E3:A5:AE:02')">
+                <div class="test-card-name">Anita Kumari</div>
+                <div class="test-card-uid">UID: E3:A5:AE:02</div>
+                <span class="badge badge-emerald">Registered (5/mo)</span>
+              </button>
+              <button class="test-card-btn" onclick="simTapCard('D7:EE:26:03')">
+                <div class="test-card-name">Unknown Card</div>
+                <div class="test-card-uid">UID: D7:EE:26:03</div>
+                <span class="badge badge-warn">Unregistered Card</span>
+              </button>
+            </div>
+
+            <div class="custom-card-input">
+              <input type="text" id="sim-custom-uid" placeholder="Custom UID (e.g. AA:BB:CC:DD)" class="form-input">
+              <button class="btn btn-secondary btn-sm" onclick="simTapCustomCard()">Tap Custom UID</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Main Two Column Grid: Users and Transactions -->
+      <div class="two-col-grid">
+        <!-- Beneficiaries Card -->
+        <section class="content-card card-glass">
+          <div class="card-toolbar">
+            <div class="card-title-group">
+              <h3>Registered Beneficiaries</h3>
+              <p>Monthly pad limits and real-time usage quotas</p>
+            </div>
+            <div class="card-actions">
+              <button class="btn btn-secondary btn-sm" onclick="openAddUserModal()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                Add User
+              </button>
+              <button class="btn btn-danger-subtle btn-sm" onclick="confirmResetAll()">
+                Reset Monthly
+              </button>
+            </div>
+          </div>
+
+          <div class="table-responsive">
+            <table class="data-table" id="users-table">
+              <thead>
+                <tr>
+                  <th>Beneficiary</th>
+                  <th>RFID UID</th>
+                  <th>Quota Used</th>
+                  <th>Remaining</th>
+                  <th>Status</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="users-tbody">
+                <tr><td colspan="6" class="text-center text-muted py-4">Loading registered beneficiaries...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Transactions Ledger Card -->
+        <section class="content-card card-glass">
+          <div class="card-toolbar">
+            <div class="card-title-group">
+              <h3>Live Dispense Ledger</h3>
+              <p>Cloud audit log synchronized with Uno R4 WiFi</p>
+            </div>
+            <div class="live-pulse-badge">
+              <span class="status-indicator-dot online"></span>
+              Live Sync
+            </div>
+          </div>
+
+          <div class="table-responsive">
+            <table class="data-table" id="tx-table">
+              <thead>
+                <tr>
+                  <th>Beneficiary</th>
+                  <th>UID</th>
+                  <th>Qty</th>
+                  <th>Status</th>
+                  <th>Timestamp</th>
+                </tr>
+              </thead>
+              <tbody id="tx-tbody">
+                <tr><td colspan="5" class="text-center text-muted py-4">No dispense activity yet</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- Add / Edit Beneficiary Modal -->
+  <div class="modal-backdrop hidden" id="user-modal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3 id="modal-title">Register Beneficiary Card</h3>
+        <button class="btn-icon" onclick="closeUserModal()">✕</button>
+      </div>
+      <form id="user-form" onsubmit="handleUserSubmit(event)">
+        <div class="form-group">
+          <label for="form-name">Beneficiary Name</label>
+          <input type="text" id="form-name" class="form-input" placeholder="e.g. Priya Sharma" required>
+        </div>
+        <div class="form-group">
+          <label for="form-uid">RFID Card UID</label>
+          <input type="text" id="form-uid" class="form-input font-mono" placeholder="e.g. C3:27:87:14" required>
+          <span class="field-hint">Format: 8-10 hex characters separated by colons</span>
+        </div>
+        <div class="form-group">
+          <label for="form-limit">Monthly Limit (Pads)</label>
+          <input type="number" id="form-limit" class="form-input" value="5" min="1" max="20" required>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeUserModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Beneficiary</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
