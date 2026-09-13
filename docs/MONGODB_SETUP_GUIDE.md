@@ -20,7 +20,8 @@ This guide walks you through setting up a free, cloud-hosted MongoDB Atlas clust
 4. Set a **Username** (e.g. `Nitya_20101` or `hygienet_admin`).
 5. Set a secure **Password** (or click Autogenerate).
    > [!IMPORTANT]
-   > Avoid special characters like `@`, `:`, `/`, or `%` inside your password, or ensure they are URL-encoded. Using letters and numbers (e.g., `1RofTIWhDAAuOAD5`) is recommended to avoid parsing issues.
+   > Avoid special characters like `@`, `:`, `/`, or `%` inside your password, or ensure they are URL-encoded. Using letters and numbers (e.g., `YourStrongPassword123`) is recommended to avoid parsing issues.
+
 6. Under **Database User Privileges**, select **Read and write to any database** (or Atlas admin).
 7. Click **Add User**.
 
