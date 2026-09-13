@@ -36,9 +36,24 @@ def verify_device_key(req):
 #  FRONTEND STATIC ROUTES
 # ------------------------------------------------------------
 
+def get_public_dir():
+    candidates = [
+        Path(__file__).resolve().parent / "public",
+        BASE_DIR / "public",
+        Path.cwd() / "public",
+        Path.cwd() / "api" / "public",
+        Path("/var/task/public"),
+        Path("/var/task/api/public"),
+    ]
+    for c in candidates:
+        if c.exists() and (c / "index.html").exists():
+            return c
+    return BASE_DIR / "public"
+
 @app.route("/")
 def index():
-    return send_from_directory(str(BASE_DIR / "public"), "index.html")
+    pub = get_public_dir()
+    return send_from_directory(str(pub), "index.html")
 
 
 # ------------------------------------------------------------
@@ -196,10 +211,11 @@ def list_transactions():
 
 @app.route("/<path:path>")
 def static_proxy(path):
-    file_path = BASE_DIR / "public" / path
-    if file_path.exists():
-        return send_from_directory(str(BASE_DIR / "public"), path)
-    return send_from_directory(str(BASE_DIR / "public"), "index.html")
+    pub = get_public_dir()
+    file_path = pub / path
+    if file_path.exists() and file_path.is_file():
+        return send_from_directory(str(pub), path)
+    return send_from_directory(str(pub), "index.html")
 
 # ------------------------------------------------------------
 #  LOCAL LAUNCHER
