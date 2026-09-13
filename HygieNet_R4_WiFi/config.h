@@ -9,8 +9,9 @@
 //  WI-FI CREDENTIALS
 //  Note: Arduino UNO R4 WiFi connects to standard 2.4GHz Wi-Fi
 // ------------------------------------------------------------
-#define WIFI_SSID       "YOUR_WIFI_SSID"
-#define WIFI_PASSWORD   "YOUR_WIFI_PASSWORD"
+#define WIFI_SSID       "redmi 12"
+#define WIFI_PASSWORD   "12345678"
+
 
 // ------------------------------------------------------------
 //  CLOUD SERVER CONFIGURATION

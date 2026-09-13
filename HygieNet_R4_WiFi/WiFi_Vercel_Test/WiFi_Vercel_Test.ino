@@ -7,8 +7,9 @@
 #include <WiFiS3.h>
 
 // 1. Enter your Wi-Fi Credentials here (2.4GHz network):
-const char* WIFI_SSID     = "YOUR_WIFI_SSID";
-const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
+const char* WIFI_SSID     = "redmi 12";
+const char* WIFI_PASSWORD = "12345678";
+
 
 // 2. Your live Vercel Cloud Server:
 const char* SERVER_HOST   = "hye-net.vercel.app";
