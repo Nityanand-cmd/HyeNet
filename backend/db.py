@@ -219,6 +219,49 @@ def reset_user_monthly(uid: str):
         return True
     return False
 
+def update_user(uid: str, name: str, monthly_limit: int):
+    uid = uid.strip().upper()
+    db = get_db()
+    if db is not None:
+        try:
+            res = db.users.update_one(
+                {"rfid_uid": uid},
+                {
+                    "$set": {
+                        "name": name.strip(),
+                        "monthly_limit": monthly_limit,
+                        "updated_at": datetime.now(timezone.utc)
+                    }
+                }
+            )
+            return res.matched_count > 0
+        except Exception as e:
+            print(f"[MongoDB Error] update_user: {e}")
+            return False
+
+    if uid in _fallback_users:
+        _fallback_users[uid]["name"] = name.strip()
+        _fallback_users[uid]["monthly_limit"] = monthly_limit
+        return True
+    return False
+
+def delete_user(uid: str):
+    uid = uid.strip().upper()
+    db = get_db()
+    if db is not None:
+        try:
+            res = db.users.delete_one({"rfid_uid": uid})
+            return res.deleted_count > 0
+        except Exception as e:
+            print(f"[MongoDB Error] delete_user: {e}")
+            return False
+
+    if uid in _fallback_users:
+        del _fallback_users[uid]
+        return True
+    return False
+
+
 # ------------------------------------------------------------
 #  DISPENSE & TRANSACTION OPERATIONS
 # ------------------------------------------------------------
@@ -360,6 +403,25 @@ def get_recent_transactions(limit: int = 50):
 
     return _fallback_transactions[:limit]
 
+def get_user_transactions(uid: str, limit: int = 50):
+    uid = uid.strip().upper()
+    db = get_db()
+    if db is not None:
+        try:
+            cursor = db.transactions.find({"rfid_uid": uid}).sort("timestamp", pymongo.DESCENDING).limit(limit)
+            txs = []
+            for doc in cursor:
+                doc["_id"] = str(doc.get("_id", ""))
+                if isinstance(doc.get("timestamp"), datetime):
+                    doc["timestamp"] = doc["timestamp"].strftime("%Y-%m-%d %H:%M:%S")
+                txs.append(doc)
+            return txs
+        except Exception as e:
+            print(f"[MongoDB Error] get_user_transactions: {e}")
+
+    return [t for t in _fallback_transactions if t.get("rfid_uid", "").upper() == uid][:limit]
+
+
 # ------------------------------------------------------------
 #  DEVICE HEARTBEAT & STATS
 # ------------------------------------------------------------
@@ -411,19 +473,27 @@ def get_dashboard_summary():
             total_dispensed = agg[0]["total"] if agg else 0
 
             # Today's transactions
-            start_of_day = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-            today_tx_count = db.transactions.count_documents({"timestamp": {"$gte": start_of_day}})
+            now_utc = datetime.now(timezone.utc)
+            start_of_day = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+            try:
+                today_tx_count = db.transactions.count_documents({"timestamp": {"$gte": start_of_day}})
+            except Exception:
+                today_tx_count = db.transactions.count_documents({"timestamp": {"$gte": start_of_day.replace(tzinfo=None)}})
 
             # Devices online status
             devices = list(db.devices.find())
             for d in devices:
                 d["_id"] = str(d.get("_id", ""))
-                if isinstance(d.get("last_seen"), datetime):
-                    d["last_seen_str"] = d["last_seen"].strftime("%H:%M:%S")
-                    diff_seconds = (datetime.now(timezone.utc) - d["last_seen"]).total_seconds()
+                dt = d.get("last_seen")
+                if isinstance(dt, datetime):
+                    d["last_seen_str"] = dt.strftime("%H:%M:%S")
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    diff_seconds = (now_utc - dt).total_seconds()
                     d["is_active"] = diff_seconds < 120
                 else:
                     d["is_active"] = False
+
 
             return {
                 "total_dispensed": total_dispensed,

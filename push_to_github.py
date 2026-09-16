@@ -23,14 +23,21 @@ def push(token=None):
     # Check if there are uncommitted changes and commit them
     status = p.status(repo)
     if status.untracked or status.staged['add'] or status.staged['modify'] or status.unstaged:
-        p.add(repo, paths=['.'])
+        files_to_stage = []
+        for path in status.unstaged + [f.encode() if isinstance(f, str) else f for f in status.untracked]:
+            p_str = path.decode('utf-8') if isinstance(path, bytes) else str(path)
+            if p_str not in ('.', './', '.env', '.env.local') and not p_str.startswith('.git'):
+                files_to_stage.append(p_str)
+        if files_to_stage:
+            repo.stage(files_to_stage)
         p.commit(
             repo,
-            message="chore: update project files",
+            message="feat: role-based auth (admin/beneficiary), remove simulator, clean modern UI",
             author="Nityanand-cmd <nityanand@users.noreply.github.com>",
             committer="Nityanand-cmd <nityanand@users.noreply.github.com>"
         )
         print("[Git] Committed local changes.")
+
 
     if token:
         # Push using token
