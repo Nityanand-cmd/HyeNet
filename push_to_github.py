@@ -32,7 +32,7 @@ def push(token=None):
             repo.stage(files_to_stage)
         p.commit(
             repo,
-            message="feat: role-based auth (admin/beneficiary), remove simulator, clean modern UI",
+            message="feat: add menstrual period tracker, bilingual AI chatbot (HygieBot), and fix user login sync",
             author="Nityanand-cmd <nityanand@users.noreply.github.com>",
             committer="Nityanand-cmd <nityanand@users.noreply.github.com>"
         )

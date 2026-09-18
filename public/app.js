@@ -60,8 +60,9 @@ function showAuthView() {
   authBtn.textContent = 'Sign In';
   authBtn.className = 'btn btn-primary btn-sm';
   
-  // Health sync
+  // Health sync & load registered cards
   fetchHealthStatus();
+  populateQuickPills();
 }
 
 function showAdminDashboard() {
@@ -161,6 +162,24 @@ function switchAuthTab(tab) {
   }
 }
 
+async function populateQuickPills() {
+  const container = document.getElementById('quick-pills-container');
+  if (!container) return;
+  try {
+    const users = await fetch('/api/users', { cache: 'no-store' }).then(r => r.json());
+    if (users && users.length > 0) {
+      container.innerHTML = users.slice(0, 6).map(u => `
+        <button type="button" class="quick-pill" onclick="quickFillUid('${escapeHtml(u.rfid_uid)}')">
+          <span>${escapeHtml(u.name)}</span>
+          <code>${escapeHtml(u.rfid_uid)}</code>
+        </button>
+      `).join('');
+    }
+  } catch (e) {
+    console.warn('Could not auto-fetch quick pills:', e);
+  }
+}
+
 function quickFillUid(uid) {
   const input = document.getElementById('beneficiary-uid');
   input.value = uid;
@@ -228,6 +247,10 @@ async function handleUserLogin(e) {
       });
       showToast(`Welcome back, ${data.user.name}!`, 'success');
       showUserPortal();
+      renderUserProfile(data.user);
+      if (data.user.cycle_data) {
+        updateCycleTracker(data.user.cycle_data, data.user.remaining);
+      }
     } else {
       showToast(data.message || 'Card UID not registered in system.', 'error');
     }
@@ -571,12 +594,18 @@ async function loadUserProfile() {
 
   try {
     const [profileRes, txRes] = await Promise.all([
-      fetch(`/api/user/${encodeURIComponent(session.uid)}`).then(r => r.json()),
-      fetch(`/api/user/${encodeURIComponent(session.uid)}/transactions?limit=20`).then(r => r.json())
+      fetch(`/api/user/${encodeURIComponent(session.uid)}`, { cache: 'no-store' }).then(r => r.json()),
+      fetch(`/api/user/${encodeURIComponent(session.uid)}/transactions?limit=20`, { cache: 'no-store' }).then(r => r.json())
     ]);
 
     if (profileRes.success && profileRes.user) {
+      setSession({
+        role: 'user',
+        uid: profileRes.user.rfid_uid,
+        name: profileRes.user.name
+      });
       renderUserProfile(profileRes.user);
+      updateCycleTracker(profileRes.user.cycle_data, profileRes.user.remaining);
     }
     renderUserTransactions(txRes || []);
   } catch (err) {
@@ -700,3 +729,365 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
 }
+
+// ------------------------------------------------------------
+//  PERIOD & MENSTRUAL CYCLE TRACKER
+// ------------------------------------------------------------
+
+let currentUserCycleData = null;
+let currentUserRemainingPads = 5;
+
+function updateCycleTracker(cycleData, remainingPads) {
+  if (remainingPads !== undefined) {
+    currentUserRemainingPads = remainingPads;
+  }
+  if (cycleData) {
+    currentUserCycleData = cycleData;
+  }
+
+  // Calculate default date if none provided (14 days ago for mid-cycle demo)
+  const today = new Date();
+  let defaultDateStr = new Date(today.getTime() - 12 * 86400000).toISOString().slice(0, 10);
+
+  const lastDateStr = (currentUserCycleData && currentUserCycleData.last_period_date)
+    ? currentUserCycleData.last_period_date
+    : defaultDateStr;
+
+  const cycleLen = (currentUserCycleData && currentUserCycleData.cycle_length)
+    ? parseInt(currentUserCycleData.cycle_length, 10)
+    : 28;
+
+  const periodDur = (currentUserCycleData && currentUserCycleData.period_duration)
+    ? parseInt(currentUserCycleData.period_duration, 10)
+    : 5;
+
+  // Set input values
+  const dateInput = document.getElementById('cycle-last-date');
+  const lenInput = document.getElementById('cycle-length-input');
+  const durInput = document.getElementById('period-duration-input');
+
+  if (dateInput) dateInput.value = lastDateStr;
+  if (lenInput) lenInput.value = cycleLen;
+  if (durInput) durInput.value = periodDur;
+
+  // Day calculation
+  const [sy, sm, sd] = lastDateStr.split('-').map(Number);
+  const startDate = new Date(sy, sm - 1, sd);
+  const nowOnlyDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  
+  let diffDays = Math.floor((nowOnlyDate - startDate) / (1000 * 60 * 60 * 24));
+  if (diffDays < 0) diffDays = 0;
+
+  const cycleDay = (diffDays % cycleLen) + 1;
+  const daysUntilNext = cycleLen - (cycleDay - 1);
+  const isPeriodActive = cycleDay <= periodDur;
+
+  // Phase categorization
+  let phaseName = 'Menstrual Phase';
+  let phaseColor = '#f43f5e';
+  let badgeClass = 'badge badge-err';
+  let phaseTitle = 'Menstrual Phase (Active Flow)';
+  let phaseDesc = 'Uterine lining is shedding. Prioritize gentle rest, warmth, adequate hydration, and change sanitary pads every 4 to 6 hours.';
+
+  if (isPeriodActive) {
+    phaseName = `Menstrual Phase (Day ${cycleDay})`;
+    phaseColor = '#f43f5e';
+    badgeClass = 'badge badge-err';
+    phaseTitle = `Menstrual Phase (Day ${cycleDay} of ${periodDur})`;
+    phaseDesc = 'Active menstrual flow. Stay clean, comfortable, and ensure you have sufficient pads from the HygieNet dispenser.';
+  } else if (cycleDay <= Math.floor(cycleLen * 0.46)) {
+    phaseName = 'Follicular Phase';
+    phaseColor = '#10b981';
+    badgeClass = 'badge badge-emerald';
+    phaseTitle = 'Follicular Phase (Renewal)';
+    phaseDesc = 'Follicle-stimulating hormone is elevating estrogen levels. Physical stamina, mood, and cognitive clarity are generally highest.';
+  } else if (cycleDay <= Math.floor(cycleLen * 0.58)) {
+    phaseName = 'Ovulation Phase';
+    phaseColor = '#8b5cf6';
+    badgeClass = 'badge badge-cyan';
+    phaseTitle = 'Ovulation Phase (Peak Vitality)';
+    phaseDesc = 'A mature egg is released from the ovary. Hormonal vitality and body temperature peak during this window.';
+  } else {
+    phaseName = 'Luteal Phase';
+    phaseColor = '#f59e0b';
+    badgeClass = 'badge badge-warn';
+    phaseTitle = 'Luteal Phase (PMS & Pad Readiness)';
+    phaseDesc = 'Progesterone dominance prepares for your next cycle. Mild PMS or fatigue may occur. Excellent time to collect pads from the machine!';
+  }
+
+  // Update circular gauge
+  const circumference = 427.26; // 2 * PI * 68
+  const fraction = Math.min(Math.max(cycleDay / cycleLen, 0.03), 1);
+  const offset = circumference * (1 - fraction);
+
+  const gaugeFill = document.getElementById('cycle-gauge-fill');
+  if (gaugeFill) {
+    gaugeFill.style.strokeDashoffset = offset;
+    gaugeFill.style.stroke = phaseColor;
+  }
+
+  // Text Elements
+  const dayNumEl = document.getElementById('cycle-day-num');
+  if (dayNumEl) dayNumEl.textContent = `Day ${cycleDay}`;
+
+  const dayLabelEl = document.getElementById('cycle-day-label');
+  if (dayLabelEl) dayLabelEl.textContent = `of ${cycleLen} Day Cycle`;
+
+  const countTextEl = document.getElementById('cycle-countdown-text');
+  if (countTextEl) {
+    if (isPeriodActive) {
+      countTextEl.textContent = '🩸 Period in Progress';
+      countTextEl.style.color = '#f43f5e';
+    } else if (daysUntilNext === 0 || daysUntilNext === cycleLen) {
+      countTextEl.textContent = '🩸 Period Due Today';
+      countTextEl.style.color = '#f43f5e';
+    } else {
+      countTextEl.textContent = `Starts in ${daysUntilNext} day${daysUntilNext === 1 ? '' : 's'}`;
+      countTextEl.style.color = '#38bdf8';
+    }
+  }
+
+  const phaseNameEl = document.getElementById('cycle-phase-name');
+  if (phaseNameEl) {
+    phaseNameEl.textContent = phaseName;
+    phaseNameEl.style.color = phaseColor;
+  }
+
+  const phaseBadgeEl = document.getElementById('cycle-phase-badge');
+  if (phaseBadgeEl) {
+    phaseBadgeEl.textContent = phaseName;
+    phaseBadgeEl.className = badgeClass;
+  }
+
+  // Estimated next start date
+  const cyclesCompleted = Math.floor(diffDays / cycleLen);
+  const nextEstimatedTimestamp = startDate.getTime() + (cyclesCompleted + 1) * cycleLen * 86400000;
+  const nextEstimatedDate = new Date(nextEstimatedTimestamp);
+  const nextDateFormatted = nextEstimatedDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+
+  const nextDateEl = document.getElementById('cycle-next-date');
+  if (nextDateEl) nextDateEl.textContent = nextDateFormatted;
+
+  // Phase Detail box
+  const phaseDot = document.getElementById('phase-color-dot');
+  if (phaseDot) phaseDot.style.background = phaseColor;
+
+  const phaseTitleEl = document.getElementById('phase-detail-title');
+  if (phaseTitleEl) phaseTitleEl.textContent = phaseTitle;
+
+  const phaseDescEl = document.getElementById('phase-detail-desc');
+  if (phaseDescEl) phaseDescEl.textContent = phaseDesc;
+
+  // Timeline indicator needle
+  const timelineNeedle = document.getElementById('timeline-needle');
+  if (timelineNeedle) {
+    const percent = Math.min(Math.max(((cycleDay - 1) / cycleLen) * 100, 2), 98);
+    timelineNeedle.style.left = `${percent}%`;
+  }
+
+  // Smart HygieNet Pad Readiness Banner
+  const banner = document.getElementById('pad-readiness-banner');
+  const readTitle = document.getElementById('readiness-title');
+  const readDesc = document.getElementById('readiness-desc');
+
+  if (banner && readTitle && readDesc) {
+    if (currentUserRemainingPads === 0) {
+      banner.classList.remove('ready');
+      readTitle.textContent = 'Pad Quota Fully Used (0 pads remaining)';
+      readDesc.textContent = `Your next cycle begins in ~${daysUntilNext} day(s), but your monthly quota is exhausted. Please contact your campus administrator for an allocation reload.`;
+    } else if (isPeriodActive) {
+      banner.classList.add('ready');
+      readTitle.textContent = `Period Active — ${currentUserRemainingPads} Pad(s) Available in Quota`;
+      readDesc.textContent = `Your cycle is currently active. You can dispense your remaining ${currentUserRemainingPads} pad(s) from the HygieNet machine whenever needed.`;
+    } else if (daysUntilNext <= 3) {
+      banner.classList.add('ready');
+      readTitle.textContent = `Flow Imminent (${currentUserRemainingPads} pads ready for collection)`;
+      readDesc.textContent = `Your period is estimated to begin in ${daysUntilNext} day(s). Tap your RFID card at the HygieNet machine today to collect pads ahead of time!`;
+    } else {
+      banner.classList.add('ready');
+      readTitle.textContent = `Machine Stock Ready (${currentUserRemainingPads} pads balance)`;
+      readDesc.textContent = `Next cycle starts in ~${daysUntilNext} days (${nextDateFormatted}). You have a healthy monthly balance of ${currentUserRemainingPads} pads.`;
+    }
+  }
+}
+
+async function handleCycleSettingsSave(e) {
+  e.preventDefault();
+  const session = getSession();
+  if (!session || !session.uid) {
+    showToast('Please log in as a beneficiary to save cycle data.', 'error');
+    return;
+  }
+
+  const lastDate = document.getElementById('cycle-last-date').value;
+  const cycleLen = parseInt(document.getElementById('cycle-length-input').value, 10) || 28;
+  const periodDur = parseInt(document.getElementById('period-duration-input').value, 10) || 5;
+  const btn = document.getElementById('btn-save-cycle');
+
+  if (!lastDate) {
+    showToast('Please select your last period start date.', 'error');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.innerHTML = 'Saving...';
+
+  try {
+    const res = await fetch(`/api/user/${encodeURIComponent(session.uid)}/cycle`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        last_period_date: lastDate,
+        cycle_length: cycleLen,
+        period_duration: periodDur
+      })
+    });
+
+    const data = await res.json();
+    if (data.success) {
+      showToast('Cycle tracker updated successfully!', 'success');
+      updateCycleTracker({
+        last_period_date: lastDate,
+        cycle_length: cycleLen,
+        period_duration: periodDur
+      }, currentUserRemainingPads);
+    } else {
+      showToast(data.message || 'Failed to save cycle settings', 'error');
+    }
+  } catch (err) {
+    showToast('Network error saving cycle settings', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = `
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+        <polyline points="17 21 17 13 7 13 7 21"></polyline>
+        <polyline points="7 3 7 8 15 8"></polyline>
+      </svg>
+      Save & Recalculate Cycle
+    `;
+  }
+}
+
+// ------------------------------------------------------------
+//  AI CHATBOT (HYGIEBOT / SAHELI AI)
+// ------------------------------------------------------------
+
+let chatLanguage = 'en';
+
+function toggleChatWindow() {
+  const box = document.getElementById('chat-window');
+  if (!box) return;
+  box.classList.toggle('hidden');
+  if (!box.classList.contains('hidden')) {
+    const input = document.getElementById('chat-user-input');
+    if (input) input.focus();
+    scrollChatToBottom();
+  }
+}
+
+function toggleChatLanguage() {
+  chatLanguage = chatLanguage === 'en' ? 'hi' : 'en';
+  const flag = document.getElementById('chat-lang-flag');
+  const label = document.getElementById('chat-lang-label');
+  const chipsContainer = document.getElementById('chat-quick-chips');
+
+  if (chatLanguage === 'hi') {
+    if (flag) flag.textContent = '🇬🇧';
+    if (label) label.textContent = 'English';
+    if (chipsContainer) {
+      chipsContainer.innerHTML = `
+        <button type="button" class="chat-chip" onclick="handleChipClick(this)">🩸 पैड कब बदलें?</button>
+        <button type="button" class="chat-chip" onclick="handleChipClick(this)">🌿 दर्द से राहत के उपाय</button>
+        <button type="button" class="chat-chip" onclick="handleChipClick(this)">🗑️ पैड का सही निपटान</button>
+        <button type="button" class="chat-chip" onclick="handleChipClick(this)">⚙️ मशीन कैसे चलाएं?</button>
+        <button type="button" class="chat-chip" onclick="handleChipClick(this)">📅 मासिक चक्र ट्रैकर</button>
+      `;
+    }
+    appendChatMessage('bot', 'नमस्ते! मैं **HygieBot** हूँ — आपकी माहवारी स्वास्थ्य एवं HygieNet मशीन सहायक। आप मुझसे कोई भी प्रश्न पूछ सकती हैं।');
+  } else {
+    if (flag) flag.textContent = '🇮🇳';
+    if (label) label.textContent = 'हिन्दी';
+    if (chipsContainer) {
+      chipsContainer.innerHTML = `
+        <button type="button" class="chat-chip" onclick="handleChipClick(this)">🩸 Pad change guide</button>
+        <button type="button" class="chat-chip" onclick="handleChipClick(this)">🌿 Period cramp relief</button>
+        <button type="button" class="chat-chip" onclick="handleChipClick(this)">🗑️ Safe pad disposal</button>
+        <button type="button" class="chat-chip" onclick="handleChipClick(this)">⚙️ How to use machine</button>
+        <button type="button" class="chat-chip" onclick="handleChipClick(this)">📅 Menstrual cycle phases</button>
+      `;
+    }
+    appendChatMessage('bot', 'Switched to English! Feel free to ask about period hygiene, cramps, or machine vending.');
+  }
+}
+
+function handleChipClick(btn) {
+  const text = btn.textContent.replace(/^[^\w\u0900-\u097F]+/, '').trim();
+  const input = document.getElementById('chat-user-input');
+  if (input) input.value = text;
+  sendChatMessage(text);
+}
+
+function handleSendChatMessage(e) {
+  e.preventDefault();
+  const input = document.getElementById('chat-user-input');
+  if (!input) return;
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  sendChatMessage(text);
+}
+
+async function sendChatMessage(text) {
+  appendChatMessage('user', text);
+  const typing = document.getElementById('chat-typing');
+  if (typing) typing.classList.remove('hidden');
+  scrollChatToBottom();
+
+  try {
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text, lang: chatLanguage })
+    });
+    const data = await res.json();
+    if (typing) typing.classList.add('hidden');
+    appendChatMessage('bot', data.reply || 'I could not process your request right now. Please try asking again.');
+  } catch (err) {
+    if (typing) typing.classList.add('hidden');
+    appendChatMessage('bot', 'Network error reaching HygieBot AI. Please try again in a moment.');
+  }
+  scrollChatToBottom();
+}
+
+function appendChatMessage(sender, text) {
+  const container = document.getElementById('chat-messages');
+  if (!container) return;
+
+  const msgDiv = document.createElement('div');
+  msgDiv.className = `chat-msg msg-${sender}`;
+
+  let formatted = escapeHtml(text)
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\n/g, '<br>');
+
+  const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  msgDiv.innerHTML = `
+    <div class="msg-bubble">${formatted}</div>
+    <span class="msg-time">${timeStr}</span>
+  `;
+
+  container.appendChild(msgDiv);
+  scrollChatToBottom();
+}
+
+function scrollChatToBottom() {
+  const container = document.getElementById('chat-messages');
+  if (container) {
+    setTimeout(() => {
+      container.scrollTop = container.scrollHeight;
+    }, 40);
+  }
+}
+

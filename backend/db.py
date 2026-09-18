@@ -112,21 +112,76 @@ def get_connection_status():
 #  USER OPERATIONS
 # ------------------------------------------------------------
 
+def normalize_uid(raw_uid: str) -> str:
+    """
+    Normalizes RFID UID strings into uppercase colon-separated format.
+    Accepts: 'C3:27:87:14', 'c3:27:87:14', 'C3278714', 'c3 27 87 14', 'c3-27-87-14'.
+    """
+    if not raw_uid:
+        return ""
+    clean = "".join(c for c in raw_uid.strip().upper() if c in "0123456789ABCDEF")
+    if len(clean) % 2 == 0 and len(clean) >= 6 and ":" not in raw_uid:
+        return ":".join(clean[i:i+2] for i in range(0, len(clean), 2))
+    return raw_uid.strip().upper().replace(" ", ":").replace("-", ":")
+
 def get_user_by_uid(uid: str):
-    uid = uid.strip().upper()
+    norm = normalize_uid(uid)
+    raw = uid.strip().upper()
     db = get_db()
     if db is not None:
         try:
-            return db.users.find_one({"rfid_uid": uid})
+            user = db.users.find_one({"$or": [{"rfid_uid": norm}, {"rfid_uid": raw}]})
+            if user:
+                return user
         except Exception as e:
             print(f"[MongoDB Error] get_user_by_uid: {e}")
 
     # Fallback
-    if uid in _fallback_users:
-        u = _fallback_users[uid].copy()
-        u["rfid_uid"] = uid
-        return u
+    for k in (norm, raw):
+        if k in _fallback_users:
+            u = _fallback_users[k].copy()
+            u["rfid_uid"] = k
+            return u
     return None
+
+def get_user_cycle(uid: str):
+    user = get_user_by_uid(uid)
+    if not user:
+        return None
+    default_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return user.get("cycle_data", {
+        "last_period_date": default_date,
+        "cycle_length": 28,
+        "period_duration": 5
+    })
+
+def update_user_cycle(uid: str, last_period_date: str, cycle_length: int = 28, period_duration: int = 5):
+    user = get_user_by_uid(uid)
+    if not user:
+        return False
+    actual_uid = user.get("rfid_uid", uid)
+    cycle_data = {
+        "last_period_date": last_period_date,
+        "cycle_length": int(cycle_length),
+        "period_duration": int(period_duration),
+        "updated_at": datetime.now(timezone.utc)
+    }
+    db = get_db()
+    if db is not None:
+        try:
+            db.users.update_one(
+                {"rfid_uid": actual_uid},
+                {"$set": {"cycle_data": cycle_data}}
+            )
+            return True
+        except Exception as e:
+            print(f"[MongoDB Error] update_user_cycle: {e}")
+            return False
+    if actual_uid in _fallback_users:
+        _fallback_users[actual_uid]["cycle_data"] = cycle_data
+        return True
+    return False
+
 
 def get_all_users():
     db = get_db()
@@ -405,10 +460,15 @@ def get_recent_transactions(limit: int = 50):
 
 def get_user_transactions(uid: str, limit: int = 50):
     uid = uid.strip().upper()
+    user = get_user_by_uid(uid)
+    actual_uid = user.get("rfid_uid", uid) if user else uid
+    raw_uid = normalize_uid(uid)
+    
     db = get_db()
     if db is not None:
         try:
-            cursor = db.transactions.find({"rfid_uid": uid}).sort("timestamp", pymongo.DESCENDING).limit(limit)
+            query = {"$or": [{"rfid_uid": uid}, {"rfid_uid": actual_uid}]}
+            cursor = db.transactions.find(query).sort("timestamp", pymongo.DESCENDING).limit(limit)
             txs = []
             for doc in cursor:
                 doc["_id"] = str(doc.get("_id", ""))
@@ -419,7 +479,7 @@ def get_user_transactions(uid: str, limit: int = 50):
         except Exception as e:
             print(f"[MongoDB Error] get_user_transactions: {e}")
 
-    return [t for t in _fallback_transactions if t.get("rfid_uid", "").upper() == uid][:limit]
+    return [t for t in _fallback_transactions if normalize_uid(t.get("rfid_uid", "")) in (normalize_uid(uid), normalize_uid(actual_uid))][:limit]
 
 
 # ------------------------------------------------------------

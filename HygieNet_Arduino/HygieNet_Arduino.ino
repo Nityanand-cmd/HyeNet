@@ -1,364 +1,359 @@
-#include <Wire.h>
+// ============================================================
+//  HygieNet — IoT Sanitary Vending Machine (UNO R3 Firmware)
+//  Hardware: Arduino UNO R3 + MFRC522 + SSD1306 OLED + 2x Servos + 3x Push Buttons
+// ============================================================
+
 #include <SPI.h>
 #include <MFRC522.h>
+#include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <Servo.h>
 
-// =================================================
-// OLED
-// =================================================
+// ================= PINOUT =================
 
-Adafruit_SSD1306 display(128, 64, &Wire, -1);
+// RFID Module (MFRC522: SPI SCK=13, MISO=12, MOSI=11)
+#define SS_PIN 10
+#define RST_PIN 9
 
-// =================================================
-// RFID
-// =================================================
+// Push Buttons (Active LOW with internal INPUT_PULLUP)
+#define INC_BTN A0  // Increment Quantity (+)
+#define DEC_BTN A1  // Decrement Quantity (-)
+#define CNF_BTN A2  // Confirm Dispense
 
-MFRC522 rfid(10, 9);
+// Dual Servos
+#define ARM_SERVO 5   // Dispenser Push Arm Servo (Digital Pin 5)
+#define GATE_SERVO 8  // Dispenser Retention Gate Servo (Digital Pin 8)
 
-// =================================================
-// SERVOS
-// =================================================
-
-Servo arm;
-Servo gate;
-
-// =================================================
-// PINS
-// =================================================
-
-#define INC A0
-#define DEC A1
-#define CONF A2
-
-#define ARM_PIN A3
-#define GATE_PIN 8
+// I2C OLED Display (128x64 SSD1306 on SDA=A4, SCL=A5)
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_ADDR 0x3C
 
 
-// =================================================
-// SETUP
-// =================================================
+// ================= OBJECTS =================
 
-void setup() {
+MFRC522 rfid(SS_PIN, RST_PIN);
 
-  Serial.begin(9600);
+Adafruit_SSD1306 display(
+  SCREEN_WIDTH,
+  SCREEN_HEIGHT,
+  &Wire,
+  -1
+);
 
-  // -----------------------------------------------
-  // OLED — EXACT SAME INITIALIZATION AS WORKING TEST
-  // -----------------------------------------------
-
-  Wire.begin();
-
-  Serial.println("Starting OLED...");
-
-  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
-
-    Serial.println("OLED ERROR!");
-    
-    // DON'T STOP HERE
-    // Continue so we can see what else initializes
-  }
-  else {
-
-    Serial.println("OLED OK");
-
-    display.clearDisplay();
-
-    display.setTextColor(SSD1306_WHITE);
-    display.setTextSize(2);
-
-    display.setCursor(20, 20);
-    display.println("HY GNET");
-
-    display.display();
-  }
-
-  delay(1000);
+Servo armServo;
+Servo gateServo;
 
 
-  // -----------------------------------------------
-  // BUTTONS
-  // -----------------------------------------------
+// ================= VARIABLES =================
 
-  pinMode(INC, INPUT_PULLUP);
-  pinMode(DEC, INPUT_PULLUP);
-  pinMode(CONF, INPUT_PULLUP);
+int pads = 1;
 
-  Serial.println("BUTTONS OK");
+// Arm servo angles
+const int ARM_REST = 0;
+const int ARM_FORWARD = 90;
 
-
-  // -----------------------------------------------
-  // RFID
-  // -----------------------------------------------
-
-  Serial.println("Starting RFID...");
-
-  SPI.begin();
-
-  rfid.PCD_Init();
-
-  delay(100);
-
-  Serial.print("RFID VERSION: 0x");
-
-  Serial.println(
-    rfid.PCD_ReadRegister(MFRC522::VersionReg),
-    HEX
-  );
+// Gate servo angles
+const int GATE_REST = 0;
+const int GATE_OPEN = 90;
 
 
-  // -----------------------------------------------
-  // SERVOS
-  // -----------------------------------------------
+// ================= OLED BORDER =================
 
-  Serial.println("Starting servos...");
-
-  arm.attach(A3);
-  gate.attach(8);
-
-  arm.write(0);
-  gate.write(0);
-
-  Serial.println("ALL INITIALIZED");
+void drawBorder() {
+  display.drawRect(0, 0, 127, 63, SSD1306_WHITE);
+}
 
 
-  // -----------------------------------------------
-  // FINAL SCREEN
-  // -----------------------------------------------
+// ================= WELCOME SCREEN =================
 
+void showWelcome() {
   display.clearDisplay();
-
   display.setTextColor(SSD1306_WHITE);
+  drawBorder();
 
   display.setTextSize(2);
-  display.setCursor(15, 10);
-  display.println("READY");
+  display.setCursor(18, 12);
+  display.print("HYGIENET");
 
   display.setTextSize(1);
-  display.setCursor(20, 40);
-  display.println("SCAN RFID");
+  display.setCursor(42, 40);
+  display.print("WELCOME");
 
   display.display();
 }
 
 
-// =================================================
-// LOOP
-// =================================================
+// ================= SCAN SCREEN =================
+
+void showScan() {
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  drawBorder();
+
+  display.setTextSize(1);
+  display.setCursor(43, 7);
+  display.print("HYGIENET");
+
+  display.setTextSize(2);
+  display.setCursor(40, 22);
+  display.print("SCAN");
+
+  display.setTextSize(1);
+  display.setCursor(45, 46);
+  display.print("A CARD");
+
+  display.display();
+}
+
+
+// ================= CARD DETECTED =================
+
+void showCardDetected() {
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  drawBorder();
+
+  display.setTextSize(1);
+  display.setCursor(32, 15);
+  display.print("CARD DETECTED");
+
+  display.setCursor(35, 35);
+  display.print("SELECT PADS");
+
+  display.display();
+}
+
+
+// ================= PAD SELECTION SCREEN =================
+
+void showPads() {
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  drawBorder();
+
+  display.setTextSize(1);
+  display.setCursor(38, 7);
+  display.print("SELECT PADS");
+
+  display.setTextSize(3);
+  if (pads < 10) {
+    display.setCursor(58, 27);
+  } else {
+    display.setCursor(49, 27);
+  }
+  display.print(pads);
+
+  display.setTextSize(1);
+  display.setCursor(25, 54);
+  display.print("+  -  CONFIRM");
+
+  display.display();
+}
+
+
+// ================= DISPENSING SCREEN =================
+
+void showDispensing(int number) {
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  drawBorder();
+
+  display.setTextSize(1);
+  display.setCursor(38, 10);
+  display.print("DISPENSING");
+
+  display.setTextSize(2);
+  if (number < 10) {
+    display.setCursor(49, 31);
+  } else {
+    display.setCursor(43, 31);
+  }
+  display.print("PAD ");
+  display.print(number);
+
+  display.display();
+}
+
+
+// ================= THANK YOU SCREEN =================
+
+void showThankYou() {
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  drawBorder();
+
+  display.setTextSize(2);
+  display.setCursor(25, 18);
+  display.print("THANK");
+
+  display.setCursor(32, 40);
+  display.print("YOU");
+
+  display.display();
+}
+
+
+// ================= SETUP =================
+
+void setup() {
+  Serial.begin(9600);
+
+  // Push Buttons with internal pullup
+  pinMode(INC_BTN, INPUT_PULLUP);
+  pinMode(DEC_BTN, INPUT_PULLUP);
+  pinMode(CNF_BTN, INPUT_PULLUP);
+
+  // ---------- OLED ----------
+  Serial.println("Starting OLED...");
+  if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
+    Serial.println("OLED ERROR!");
+    while (1);
+  }
+  Serial.println("OLED OK");
+
+  showWelcome();
+  delay(2000);
+  showScan();
+
+  // ---------- RFID ----------
+  Serial.println("Starting RFID...");
+  SPI.begin();
+  rfid.PCD_Init();
+  delay(100);
+
+  byte version = rfid.PCD_ReadRegister(MFRC522::VersionReg);
+  Serial.print("RFID VERSION: 0x");
+  Serial.println(version, HEX);
+
+  // ---------- SERVOS ----------
+  Serial.println("Starting servos...");
+  armServo.attach(ARM_SERVO);
+  gateServo.attach(GATE_SERVO);
+
+  armServo.write(ARM_REST);
+  gateServo.write(GATE_REST);
+
+  Serial.println("ALL INITIALIZED");
+  delay(1000);
+  showScan();
+}
+
+
+// ================= MAIN LOOP =================
 
 void loop() {
+  // ------------------------------------------
+  // 1. WAIT FOR RFID CARD
+  // ------------------------------------------
+  if (!rfid.PICC_IsNewCardPresent()) {
+    return;
+  }
 
-  // -----------------------------------------------
-  // RFID
-  // -----------------------------------------------
+  if (!rfid.PICC_ReadCardSerial()) {
+    return;
+  }
 
-  if (rfid.PICC_IsNewCardPresent()) {
+  Serial.println("CARD DETECTED");
+  showCardDetected();
+  delay(1000);
 
-    if (rfid.PICC_ReadCardSerial()) {
+  // ------------------------------------------
+  // 2. PAD SELECTION
+  // ------------------------------------------
+  pads = 1;
+  showPads();
 
-      Serial.println("CARD DETECTED");
-
-      // ---- Added: send UID to Flask server (logic unchanged below) ----
-      String uid = "";
-      for (byte i = 0; i < rfid.uid.size; i++) {
-        if (rfid.uid.uidByte[i] < 0x10) uid += "0";
-        uid += String(rfid.uid.uidByte[i], HEX);
-        if (i < rfid.uid.size - 1) uid += ":";
+  while (true) {
+    // ---------- INCREMENT ----------
+    if (digitalRead(INC_BTN) == LOW) {
+      pads++;
+      if (pads > 10) {
+        pads = 10;
       }
-      uid.toUpperCase();
-      Serial.println("UID:" + uid);
-      // -------------------------------------------------------------
+      Serial.print("PADS = ");
+      Serial.println(pads);
+      showPads();
+      while (digitalRead(INC_BTN) == LOW);
+      delay(150);
+    }
+
+    // ---------- DECREMENT ----------
+    if (digitalRead(DEC_BTN) == LOW) {
+      pads--;
+      if (pads < 1) {
+        pads = 1;
+      }
+      Serial.print("PADS = ");
+      Serial.println(pads);
+      showPads();
+      while (digitalRead(DEC_BTN) == LOW);
+      delay(150);
+    }
+
+    // ---------- CONFIRM ----------
+    if (digitalRead(CNF_BTN) == LOW) {
+      Serial.print("CONFIRMED = ");
+      Serial.println(pads);
 
       display.clearDisplay();
-
-      display.setTextSize(2);
-      display.setCursor(20, 10);
-      display.println("CARD");
-
+      drawBorder();
       display.setTextSize(1);
-      display.setCursor(20, 40);
-      display.println("DETECTED");
-
-      display.display();
-
-      delay(1500);
-
-      rfid.PICC_HaltA();
-      rfid.PCD_StopCrypto1();
-
-
-      // -------------------------------------------
-      // QUANTITY TEST
-      // -------------------------------------------
-
-      int pads = 1;
-
-      display.clearDisplay();
+      display.setCursor(43, 20);
+      display.print("CONFIRMED");
 
       display.setTextSize(2);
-      display.setCursor(20, 10);
-      display.println("PADS");
-
-      display.setTextSize(2);
-      display.setCursor(55, 35);
-      display.println(pads);
-
-      display.display();
-
-
-      bool confirmed = false;
-
-
-      while (!confirmed) {
-
-        // INCREMENT
-        if (digitalRead(INC) == LOW) {
-
-          delay(50);
-
-          if (digitalRead(INC) == LOW) {
-
-            pads++;
-
-            if (pads > 10)
-              pads = 10;
-
-            Serial.print("PADS = ");
-            Serial.println(pads);
-
-            display.clearDisplay();
-
-            display.setTextSize(2);
-            display.setCursor(20, 10);
-            display.println("PADS");
-
-            display.setCursor(55, 35);
-            display.println(pads);
-
-            display.display();
-
-            while (digitalRead(INC) == LOW);
-          }
-        }
-
-
-        // DECREMENT
-        if (digitalRead(DEC) == LOW) {
-
-          delay(50);
-
-          if (digitalRead(DEC) == LOW) {
-
-            pads--;
-
-            if (pads < 1)
-              pads = 1;
-
-            Serial.print("PADS = ");
-            Serial.println(pads);
-
-            display.clearDisplay();
-
-            display.setTextSize(2);
-            display.setCursor(20, 10);
-            display.println("PADS");
-
-            display.setCursor(55, 35);
-            display.println(pads);
-
-            display.display();
-
-            while (digitalRead(DEC) == LOW);
-          }
-        }
-
-
-        // CONFIRM
-        if (digitalRead(CONF) == LOW) {
-
-          delay(50);
-
-          if (digitalRead(CONF) == LOW) {
-
-            confirmed = true;
-
-            Serial.print("CONFIRMED = ");
-            Serial.println(pads);
-
-            // ---- Added: send QTY to Flask server (logic unchanged below) ----
-            Serial.println("QTY:" + String(pads));
-            // -------------------------------------------------------------
-
-            while (digitalRead(CONF) == LOW);
-          }
-        }
+      if (pads < 10) {
+        display.setCursor(58, 40);
+      } else {
+        display.setCursor(53, 40);
       }
-
-
-      // -------------------------------------------
-      // SERVO TEST
-      // -------------------------------------------
-
-      for (int i = 1; i <= pads; i++) {
-
-        Serial.print("PAD ");
-        Serial.println(i);
-
-
-        // ARM
-        arm.write(90);
-        delay(1000);
-
-
-        // GATE
-        gate.write(90);
-        delay(1000);
-
-
-        // ARM HOME
-        arm.write(0);
-        delay(1000);
-
-
-        // GATE HOME
-        gate.write(0);
-        delay(1000);
-      }
-
-
-      // -------------------------------------------
-      // THANK YOU
-      // -------------------------------------------
-
-      display.clearDisplay();
-
-      display.setTextSize(2);
-      display.setCursor(5, 20);
-      display.println("THANK YOU");
-
+      display.print(pads);
       display.display();
 
-      Serial.println("TRANSACTION COMPLETE");
-
-      delay(3000);
-
-
-      // -------------------------------------------
-      // READY
-      // -------------------------------------------
-
-      display.clearDisplay();
-
-      display.setTextSize(2);
-      display.setCursor(15, 10);
-      display.println("HY GNET");
-
-      display.setTextSize(1);
-      display.setCursor(20, 40);
-      display.println("SCAN RFID");
-
-      display.display();
+      while (digitalRead(CNF_BTN) == LOW);
+      delay(1000);
+      break;
     }
   }
+
+  // ------------------------------------------
+  // 3. DISPENSING
+  // ------------------------------------------
+  for (int i = 1; i <= pads; i++) {
+    Serial.print("PAD ");
+    Serial.println(i);
+    showDispensing(i);
+    delay(500);
+
+    // ARM FORWARD
+    armServo.write(ARM_FORWARD);
+    delay(700);
+
+    // GATE OPEN
+    gateServo.write(GATE_OPEN);
+    delay(700);
+
+    // ARM BACK
+    armServo.write(ARM_REST);
+    delay(700);
+
+    // GATE CLOSE
+    gateServo.write(GATE_REST);
+    delay(700);
+  }
+
+  // ------------------------------------------
+  // 4. TRANSACTION COMPLETE
+  // ------------------------------------------
+  Serial.println("TRANSACTION COMPLETE");
+  showThankYou();
+  delay(2500);
+  showScan();
+
+  // RFID reset
+  rfid.PICC_HaltA();
+  rfid.PCD_StopCrypto1();
+  delay(500);
 }

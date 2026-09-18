@@ -44,8 +44,9 @@
 #define PIN_BTN_CONF    A2  // Confirm Dispense
 
 // Dual Servo Dispenser
-#define PIN_SERVO_ARM   A3  // Dispenser Push Arm
+#define PIN_SERVO_ARM   5   // Dispenser Push Arm (Digital Pin 5)
 #define PIN_SERVO_GATE  8   // Dispenser Retention Gate
+
 
 // MFRC522 RFID Module (SPI: SCK=13, MISO=12, MOSI=11)
 #define PIN_RFID_SS     10  // Slave Select (SDA)

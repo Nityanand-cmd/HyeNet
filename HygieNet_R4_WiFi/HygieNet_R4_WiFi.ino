@@ -1,11 +1,14 @@
 // ============================================================
 //  HygieNet Cloud Edition — Arduino UNO R4 WiFi Firmware
-//  Includes Built-in SERIAL MONITOR SIMULATOR:
-//  - Type '1' for Sunita Yadav (C3:27:87:14)
-//  - Type '2' for Anita Kumari (E3:A5:AE:02)
-//  - Type '3' for Invalid Card (D7:EE:26:03)
-//  - Type 'SCAN <UID>' for custom card
-//  - Type '+' to increment, '-' to decrement, 'OK' to confirm!
+//  Project: HygieNet – Smart Sanitary Pad Dispenser
+//  Controller: Arduino UNO R4 WiFi (Renesas RA4M1 + ESP32-S3)
+//  Cloud: Vercel Serverless (HTTPS) + MongoDB Atlas
+//
+//  LOCKED PINOUT (100% IDENTICAL TO WORKING UNO R3):
+//  - RC522 RFID:   SDA=D10, RST=D9, MOSI=D11, MISO=D12, SCK=D13, 3.3V, GND
+//  - OLED Display: SDA=A4, SCL=A5, VCC=5V, GND, Addr=0x3C
+//  - Push Buttons: INC=A0, DEC=A1, CNF=A2 (INPUT_PULLUP to GND)
+//  - Servos:       MG90S(ARM)=D5, SG90(GATE)=D8 (Powered by CA-2596 @ 4.8V, Common GND)
 // ============================================================
 
 #include <WiFiS3.h>
@@ -28,30 +31,42 @@ const bool  USE_SSL         = true;
 
 const char* DEVICE_KEY      = "hygienet_r4_sec_2026_x89";
 const char* DEVICE_ID       = "hygienet-01";
-const char* FIRMWARE_VER    = "2.0.0-R4";
+const char* FIRMWARE_VER    = "2.2.0-R4";
 
 // ------------------------------------------------------------
-//  2. PIN DEFINITIONS
+//  2. LOCKED PIN DEFINITIONS
 // ------------------------------------------------------------
-#define PIN_BTN_INC         A0  // Increment Button (+)
-#define PIN_BTN_DEC         A1  // Decrement Button (-)
-#define PIN_BTN_CONF        A2  // Confirm Button
+// RC522 RFID Module (Hardware SPI)
+#define SS_PIN              10
+#define RST_PIN             9
 
-#define PIN_SERVO_ARM       A3  // Push Arm Servo
-#define PIN_SERVO_GATE      8   // Retention Gate Servo
+// Push Buttons (Active LOW with internal INPUT_PULLUP)
+#define INC_BTN             A0  // Increment Quantity (+)
+#define DEC_BTN             A1  // Decrement Quantity (-)
+#define CNF_BTN             A2  // Confirm Dispense
 
-#define PIN_RFID_SS         10  // RC522 SDA/SS
-#define PIN_RFID_RST        9   // RC522 RST
+// Dual Servos (Signals from Arduino, Power from CA-2596 4.8V)
+#define ARM_SERVO           5   // MG90S Arm Servo (Digital Pin 5)
+#define GATE_SERVO          8   // SG90 Gate Servo (Digital Pin 8)
 
-#define OLED_ADDR           0x3C
+// 0.96-inch I2C OLED Display (SSD1306)
 #define SCREEN_WIDTH        128
 #define SCREEN_HEIGHT       64
+#define OLED_ADDR           0x3C
+
+// Servo Angles & Timings (Baseline Test Angles)
+const int ARM_REST          = 0;
+const int ARM_FORWARD       = 90;
+const int GATE_REST         = 0;
+const int GATE_OPEN         = 90;
+const int SERVO_DELAY_MS    = 700;
 
 // ------------------------------------------------------------
-//  3. GLOBAL HARDWARE OBJECTS
+//  3. GLOBAL OBJECTS & VARIABLES
 // ------------------------------------------------------------
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
-MFRC522 rfid(PIN_RFID_SS, PIN_RFID_RST);
+MFRC522 rfid(SS_PIN, RST_PIN);
+
 Servo armServo;
 Servo gateServo;
 
@@ -61,8 +76,25 @@ WiFiClient    tcpClient;
 unsigned long lastPingTime = 0;
 const unsigned long PING_INTERVAL = 60000;
 
+unsigned long lastWiFiRetry = 0;
+const unsigned long WIFI_RETRY_INTERVAL = 30000;
+
+int pads = 1;
+int maxSelectable = 5;
+
 // Function declarations
-void showOled(const String& line1, const String& line2, const String& line3, int size2 = 2);
+void drawBorder();
+void showWelcome();
+void showScan();
+void showCardDetected();
+void showPads(int currentPads, int maxLimit);
+void showDispensing(int number);
+void showThankYou(int remaining);
+void showVerifying();
+void showAccessDenied(const String& reason);
+void showConfirmed(int currentPads);
+void showWiFiStatus(const String& line2, const String& line3);
+
 void connectWiFi();
 void sendHeartbeat();
 bool verifyCardWithCloud(const String& uid, String& outName, int& outRemaining, int& outMaxSelectable, String& outErrorMsg);
@@ -73,50 +105,267 @@ String extractJsonValue(const String& json, const String& key);
 void printSerialHelp();
 
 // ------------------------------------------------------------
-//  SETUP
+//  4. OLED UI SCREENS (MATCHING WORKING BASELINE)
 // ------------------------------------------------------------
+
+void drawBorder() {
+  display.drawRect(0, 0, 127, 63, SSD1306_WHITE);
+}
+
+void showWelcome() {
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  drawBorder();
+
+  display.setTextSize(2);
+  display.setCursor(18, 12);
+  display.print("HYGIENET");
+
+  display.setTextSize(1);
+  display.setCursor(42, 40);
+  display.print("WELCOME");
+
+  display.display();
+}
+
+void showScan() {
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  drawBorder();
+
+  display.setTextSize(1);
+  display.setCursor(43, 7);
+  display.print("HYGIENET");
+
+  display.setTextSize(2);
+  display.setCursor(40, 22);
+  display.print("SCAN");
+
+  display.setTextSize(1);
+  display.setCursor(45, 46);
+  display.print("A CARD");
+
+  display.display();
+}
+
+void showCardDetected() {
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  drawBorder();
+
+  display.setTextSize(1);
+  display.setCursor(32, 15);
+  display.print("CARD DETECTED");
+
+  display.setCursor(28, 35);
+  display.print("CHECKING CLOUD");
+
+  display.display();
+}
+
+void showVerifying() {
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  drawBorder();
+
+  display.setTextSize(1);
+  display.setCursor(35, 12);
+  display.print("CONNECTING");
+
+  display.setTextSize(2);
+  display.setCursor(20, 26);
+  display.print("VERIFYING");
+
+  display.setTextSize(1);
+  display.setCursor(30, 48);
+  display.print("PLEASE WAIT");
+
+  display.display();
+}
+
+void showPads(int currentPads, int maxLimit) {
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  drawBorder();
+
+  display.setTextSize(1);
+  display.setCursor(38, 7);
+  display.print("SELECT PADS");
+
+  display.setTextSize(3);
+  if (currentPads < 10) {
+    display.setCursor(58, 25);
+  } else {
+    display.setCursor(49, 25);
+  }
+  display.print(currentPads);
+
+  display.setTextSize(1);
+  display.setCursor(20, 52);
+  display.print("+  -  CONFIRM");
+
+  display.display();
+}
+
+void showConfirmed(int currentPads) {
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  drawBorder();
+
+  display.setTextSize(1);
+  display.setCursor(40, 16);
+  display.print("CONFIRMED");
+
+  display.setTextSize(2);
+  if (currentPads < 10) {
+    display.setCursor(58, 36);
+  } else {
+    display.setCursor(52, 36);
+  }
+  display.print(currentPads);
+
+  display.display();
+}
+
+void showDispensing(int number) {
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  drawBorder();
+
+  display.setTextSize(1);
+  display.setCursor(38, 10);
+  display.print("DISPENSING");
+
+  display.setTextSize(2);
+  if (number < 10) {
+    display.setCursor(49, 31);
+  } else {
+    display.setCursor(43, 31);
+  }
+  display.print("PAD ");
+  display.print(number);
+
+  display.display();
+}
+
+void showThankYou(int remaining) {
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  drawBorder();
+
+  display.setTextSize(2);
+  display.setCursor(35, 12);
+  display.print("THANK");
+  display.setCursor(45, 30);
+  display.print("YOU");
+
+  display.setTextSize(1);
+  display.setCursor(20, 50);
+  display.print("LEFT THIS MO: ");
+  display.print(remaining);
+
+  display.display();
+}
+
+void showAccessDenied(const String& reason) {
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  drawBorder();
+
+  display.setTextSize(1);
+  display.setCursor(25, 14);
+  display.print("ACCESS DENIED");
+
+  display.setTextSize(1);
+  display.setCursor(18, 32);
+  if (reason == "LIMIT REACHED") {
+    display.print("0 PADS REMAINING");
+  } else if (reason == "INVALID CARD") {
+    display.print("UNREGISTERED CARD");
+  } else {
+    display.print(reason);
+  }
+
+  display.setCursor(35, 48);
+  display.print("TRY AGAIN");
+
+  display.display();
+}
+
+void showWiFiStatus(const String& line2, const String& line3) {
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  drawBorder();
+
+  display.setTextSize(1);
+  display.setCursor(32, 10);
+  display.print("HYGIENET R4");
+
+  display.setTextSize(1);
+  display.setCursor(20, 28);
+  display.print(line2);
+
+  display.setCursor(15, 46);
+  display.print(line3);
+
+  display.display();
+}
+
+// ------------------------------------------------------------
+//  5. SETUP
+// ------------------------------------------------------------
+
 void setup() {
   Serial.begin(115200);
   delay(1000);
+
   Serial.println("\n============================================");
   Serial.println("  HygieNet Cloud Edition - UNO R4 WiFi");
   Serial.println("  Firmware Version: " + String(FIRMWARE_VER));
   Serial.println("============================================");
 
-  // 1. OLED Display Init
+  // 1. Push Buttons (Active LOW with internal INPUT_PULLUP)
+  pinMode(INC_BTN, INPUT_PULLUP);
+  pinMode(DEC_BTN, INPUT_PULLUP);
+  pinMode(CNF_BTN, INPUT_PULLUP);
+
+  // 2. I2C OLED Display Init (A4=SDA, A5=SCL)
   Wire.begin();
+  Serial.println("Starting OLED...");
   if (display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
-    display.clearDisplay();
-    display.setTextColor(SSD1306_WHITE);
-    showOled("HYGIENET", "STARTING", "CONNECTING...");
-    Serial.println("[OLED] Initialized OK");
+    Serial.println("OLED OK");
+    showWelcome();
+    delay(1500);
   } else {
-    Serial.println("[OLED] Warning: SSD1306 not found on 0x3C");
+    Serial.println("OLED ERROR! (Check 0x3C I2C wiring on A4/A5)");
   }
 
-  // 2. Buttons Init
-  pinMode(PIN_BTN_INC, INPUT_PULLUP);
-  pinMode(PIN_BTN_DEC, INPUT_PULLUP);
-  pinMode(PIN_BTN_CONF, INPUT_PULLUP);
+  // 3. Dual Servos Init (D5 MG90S Arm, D8 SG90 Gate)
+  Serial.println("Starting servos...");
+  armServo.attach(ARM_SERVO);
+  gateServo.attach(GATE_SERVO);
+  armServo.write(ARM_REST);
+  gateServo.write(GATE_REST);
+  Serial.println("Servos attached: MG90S on D5, SG90 on D8 (Rest = 0 deg).");
 
-  // 3. Servos Init
-  armServo.attach(PIN_SERVO_ARM);
-  gateServo.attach(PIN_SERVO_GATE);
-  armServo.write(0);
-  gateServo.write(0);
-
-  // 4. MFRC522 RFID Init
+  // 4. MFRC522 RFID Init (D10 SS, D9 RST, SPI D11/D12/D13)
+  Serial.println("Starting RFID...");
   SPI.begin();
   rfid.PCD_Init();
+  delay(100);
+
+  byte version = rfid.PCD_ReadRegister(MFRC522::VersionReg);
+  Serial.print("RFID VERSION: 0x");
+  Serial.println(version, HEX);
 
   // 5. Connect to Wi-Fi Hotspot
   connectWiFi();
 
-  // Print Serial Simulator Help Instructions
+  // 6. Print Serial Simulator Controls
   printSerialHelp();
 
-  // 6. Ready State
-  showOled("HYGIENET", "READY", "SCAN RFID CARD");
+  // Ready State
+  showScan();
 }
 
 void printSerialHelp() {
@@ -126,18 +375,24 @@ void printSerialHelp() {
   Serial.println(" Type '3'  -> Tap Invalid Card (D7:EE:26:03)");
   Serial.println(" Type '+'  -> Increment quantity");
   Serial.println(" Type '-'  -> Decrement quantity");
-  Serial.println(" Type 'OK' -> Confirm and dispense pads");
+  Serial.println(" Type 'OK' -> Confirm dispense");
   Serial.println("-----------------------------------\n");
 }
 
 // ------------------------------------------------------------
-//  MAIN LOOP
+//  6. MAIN LOOP
 // ------------------------------------------------------------
+
 void loop() {
+  // Non-blocking Wi-Fi reconnect check
   if (WiFi.status() != WL_CONNECTED) {
-    connectWiFi();
+    if (millis() - lastWiFiRetry > WIFI_RETRY_INTERVAL) {
+      lastWiFiRetry = millis();
+      connectWiFi();
+    }
   }
 
+  // Periodic heartbeat ping to Vercel
   if (millis() - lastPingTime > PING_INTERVAL) {
     lastPingTime = millis();
     sendHeartbeat();
@@ -145,7 +400,7 @@ void loop() {
 
   String uid = "";
 
-  // 1. Check Physical RFID Card
+  // 1. Read Physical RFID Card
   if (rfid.PICC_IsNewCardPresent() && rfid.PICC_ReadCardSerial()) {
     for (byte i = 0; i < rfid.uid.size; i++) {
       if (rfid.uid.uidByte[i] < 0x10) uid += "0";
@@ -158,7 +413,7 @@ void loop() {
     Serial.println("\n[Physical RFID] Card Scanned: " + uid);
   }
 
-  // 2. Check Serial Monitor Simulator Input
+  // 2. Read Serial Monitor Test Input (Optional)
   if (uid == "" && Serial.available()) {
     String cmd = Serial.readStringUntil('\n');
     cmd.trim();
@@ -182,40 +437,44 @@ void loop() {
 
   if (uid == "") return;
 
-  showOled("VERIFYING", "PLEASE WAIT", "CHECKING CLOUD...", 1);
+  // Visual feedback: Card Detected
+  showCardDetected();
+  delay(600);
+  showVerifying();
 
-  // Cloud Authorization Call
+  // Cloud Authorization Call (Vercel API + MongoDB Atlas)
   String userName = "";
   int remainingPads = 0;
-  int maxSelectable = 0;
+  int allowedSelectable = 0;
   String errorMsg = "";
 
-  bool isAuth = verifyCardWithCloud(uid, userName, remainingPads, maxSelectable, errorMsg);
+  bool isAuth = verifyCardWithCloud(uid, userName, remainingPads, allowedSelectable, errorMsg);
 
   if (!isAuth) {
     Serial.println("[Cloud Auth] Denied: " + errorMsg);
-    showOled("ACCESS DENIED", errorMsg, "TRY AGAIN", 1);
-    delay(3000);
-    showOled("HYGIENET", "READY", "SCAN RFID CARD");
+    showAccessDenied(errorMsg);
+    delay(2800);
+    showScan();
     printSerialHelp();
     return;
   }
 
   Serial.println("[Cloud Auth] Authorized for: " + userName + " | Remaining: " + String(remainingPads));
-  Serial.println("--> Type '+' to increase, '-' to decrease, 'OK' to confirm!");
 
-  int selectedQty = 1;
+  // User pad selection mode (Bounded by user's remaining cloud quota)
+  pads = 1;
+  maxSelectable = allowedSelectable > 0 ? allowedSelectable : 1;
+  showPads(pads, maxSelectable);
+
   bool confirmed = false;
   unsigned long selectTimeout = millis() + 45000; // 45s timeout
 
-  showOled(userName, "PADS: 1", "USE +/- & CONFIRM");
-
   while (!confirmed && millis() < selectTimeout) {
-    bool inc = (digitalRead(PIN_BTN_INC) == LOW);
-    bool dec = (digitalRead(PIN_BTN_DEC) == LOW);
-    bool conf = (digitalRead(PIN_BTN_CONF) == LOW);
+    bool inc = (digitalRead(INC_BTN) == LOW);
+    bool dec = (digitalRead(DEC_BTN) == LOW);
+    bool conf = (digitalRead(CNF_BTN) == LOW);
 
-    // Read Serial commands as virtual buttons
+    // Read virtual serial buttons
     if (Serial.available()) {
       String scmd = Serial.readStringUntil('\n');
       scmd.trim();
@@ -225,80 +484,117 @@ void loop() {
       else if (scmd == "OK" || scmd == "CONF" || scmd == "CONFIRM") conf = true;
     }
 
+    // Increment (+)
     if (inc) {
-      if (selectedQty < maxSelectable) {
-        selectedQty++;
-        Serial.println("[Selected Pads]: " + String(selectedQty) + " / " + String(remainingPads) + " available");
-        showOled(userName, "PADS: " + String(selectedQty), "REMAINING: " + String(remainingPads));
+      if (pads < maxSelectable) {
+        pads++;
+        Serial.print("PADS = ");
+        Serial.println(pads);
+        showPads(pads, maxSelectable);
+        while (digitalRead(INC_BTN) == LOW);
+        delay(150);
       } else {
-        Serial.println("[Limit Alert]: Cannot select more than " + String(maxSelectable) + " pads!");
+        Serial.println("[Limit Reached]: Maximum selectable pads for this month reached!");
+        delay(150);
       }
-      delay(200);
     }
 
+    // Decrement (-)
     if (dec) {
-      if (selectedQty > 1) {
-        selectedQty--;
-        Serial.println("[Selected Pads]: " + String(selectedQty) + " / " + String(remainingPads) + " available");
-        showOled(userName, "PADS: " + String(selectedQty), "REMAINING: " + String(remainingPads));
+      if (pads > 1) {
+        pads--;
+        Serial.print("PADS = ");
+        Serial.println(pads);
+        showPads(pads, maxSelectable);
+        while (digitalRead(DEC_BTN) == LOW);
+        delay(150);
       }
-      delay(200);
     }
 
+    // Confirm
     if (conf) {
       confirmed = true;
-      Serial.println("\n[Confirmed!]: Dispensing " + String(selectedQty) + " pads for " + userName);
-      delay(200);
+      Serial.print("CONFIRMED = ");
+      Serial.println(pads);
+      showConfirmed(pads);
+      while (digitalRead(CNF_BTN) == LOW);
+      delay(800);
+      break;
     }
   }
 
   if (!confirmed) {
     Serial.println("[Selection] Timed out.");
-    showOled("TIMEOUT", "CANCELLED", "SCAN AGAIN");
-    delay(2000);
-    showOled("HYGIENET", "READY", "SCAN RFID CARD");
+    showScan();
     printSerialHelp();
     return;
   }
 
-  // Commit transaction to Vercel
-  showOled("COMMITTING", "SAVING DATA", "PLEASE WAIT...", 1);
+  // Commit transaction to Vercel API
+  showVerifying();
   int newRemaining = 0;
-  bool commitOk = confirmDispenseWithCloud(uid, selectedQty, newRemaining);
+  bool commitOk = confirmDispenseWithCloud(uid, pads, newRemaining);
 
   if (!commitOk) {
-    Serial.println("[Dispense Commit] Server transaction failed");
-    showOled("ERROR", "DISPENSE CANCEL", "PLEASE RETRY", 1);
-    delay(3000);
-    showOled("HYGIENET", "READY", "SCAN RFID CARD");
+    Serial.println("[Cloud Error] Dispense commit failed on server.");
+    showAccessDenied("SERVER ERROR");
+    delay(2500);
+    showScan();
     printSerialHelp();
     return;
   }
 
+  // Physical dual-servo dispensing cycle (700 ms delays)
   Serial.println("[Dispense Approved!] Running Servos now...");
-  showOled("DISPENSING", "PADS: " + String(selectedQty), "PLEASE COLLECT", 1);
-  runDispenserSequence(selectedQty);
+  for (int i = 1; i <= pads; i++) {
+    Serial.print("PAD ");
+    Serial.println(i);
+    showDispensing(i);
+    delay(500);
 
-  Serial.println("[Transaction Complete] Remaining pads for " + userName + ": " + String(newRemaining));
-  showOled("THANK YOU", "COLLECT PADS", "REMAINING: " + String(newRemaining), 1);
-  delay(3500);
+    // ARM FORWARD (Pin 5)
+    armServo.write(ARM_FORWARD);
+    delay(SERVO_DELAY_MS);
 
-  showOled("HYGIENET", "READY", "SCAN RFID CARD");
+    // GATE OPEN (Pin 8)
+    gateServo.write(GATE_OPEN);
+    delay(SERVO_DELAY_MS);
+
+    // ARM BACK
+    armServo.write(ARM_REST);
+    delay(SERVO_DELAY_MS);
+
+    // GATE CLOSE
+    gateServo.write(GATE_REST);
+    delay(SERVO_DELAY_MS);
+  }
+
+  // Transaction Complete
+  Serial.println("TRANSACTION COMPLETE");
+  showThankYou(newRemaining);
+  delay(2500);
+  showScan();
   printSerialHelp();
+
+  // Reset RFID reader
+  rfid.PICC_HaltA();
+  rfid.PCD_StopCrypto1();
+  delay(500);
 }
 
 // ------------------------------------------------------------
-//  WI-FI CONNECTIVITY
+//  7. WI-FI & CLOUD HTTPS IMPLEMENTATION
 // ------------------------------------------------------------
+
 void connectWiFi() {
-  Serial.print("[WiFi] Connecting to hotspot: ");
+  Serial.print("[WiFi] Connecting to: ");
   Serial.println(WIFI_SSID);
-  showOled("WIFI SETUP", "CONNECTING", String(WIFI_SSID), 1);
+  showWiFiStatus("CONNECTING WIFI", String(WIFI_SSID));
 
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
   int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 25) {
+  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
     delay(500);
     Serial.print(".");
     attempts++;
@@ -306,16 +602,15 @@ void connectWiFi() {
 
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println("\n[WiFi] Connected! IP: " + WiFi.localIP().toString());
+    showWiFiStatus("WIFI CONNECTED", WiFi.localIP().toString());
+    delay(1200);
   } else {
-    Serial.println("\n[WiFi] Connection failed! Retrying in background.");
-    showOled("WIFI ERROR", "CHECK HOTSPOT", "OFFLINE", 1);
-    delay(2000);
+    Serial.println("\n[WiFi] Connection failed! Will retry in background.");
+    showWiFiStatus("WIFI FAILED", "OFFLINE MODE");
+    delay(1500);
   }
 }
 
-// ------------------------------------------------------------
-//  CLOUD HTTPS API CALLS
-// ------------------------------------------------------------
 Client& getClient() {
   if (USE_SSL) return sslClient;
   return tcpClient;
@@ -410,23 +705,6 @@ void sendHeartbeat() {
   }
 }
 
-void runDispenserSequence(int quantity) {
-  for (int i = 1; i <= quantity; i++) {
-    Serial.println("  -> Moving ARM servo 90 deg (dispense pad " + String(i) + ")");
-    armServo.write(90);
-    delay(1000);
-    Serial.println("  -> Opening GATE servo 90 deg");
-    gateServo.write(90);
-    delay(1000);
-    Serial.println("  -> Returning ARM to 0 deg");
-    armServo.write(0);
-    delay(1000);
-    Serial.println("  -> Closing GATE to 0 deg");
-    gateServo.write(0);
-    delay(1000);
-  }
-}
-
 String readHttpResponse(Client& client) {
   String response = "";
   unsigned long timeout = millis() + 6000;
@@ -460,22 +738,4 @@ String extractJsonValue(const String& json, const String& key) {
     return json.substring(valStart, valEnd);
   }
   return "";
-}
-
-void showOled(const String& line1, const String& line2, const String& line3, int size2) {
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setTextColor(SSD1306_WHITE);
-  display.setCursor(0, 4);
-  display.println(line1);
-  display.drawLine(0, 15, 128, 15, SSD1306_WHITE);
-
-  display.setTextSize(size2);
-  display.setCursor(0, 24);
-  display.println(line2);
-
-  display.setTextSize(1);
-  display.setCursor(0, 52);
-  display.println(line3);
-  display.display();
 }

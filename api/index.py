@@ -51,6 +51,9 @@ def index():
     pub_file = BASE_DIR / "public" / "index.html"
     if pub_file.exists():
         return send_from_directory(str(BASE_DIR / "public"), "index.html")
+    api_pub = BASE_DIR / "api" / "public" / "index.html"
+    if api_pub.exists():
+        return send_from_directory(str(BASE_DIR / "api" / "public"), "index.html")
     if static_content and hasattr(static_content, "INDEX_HTML"):
         return Response(static_content.INDEX_HTML, mimetype="text/html")
     return "Not found", 404
@@ -60,18 +63,24 @@ def style_css():
     pub_file = BASE_DIR / "public" / "style.css"
     if pub_file.exists():
         return send_from_directory(str(BASE_DIR / "public"), "style.css")
+    api_pub = BASE_DIR / "api" / "public" / "style.css"
+    if api_pub.exists():
+        return send_from_directory(str(BASE_DIR / "api" / "public"), "style.css")
     if static_content and hasattr(static_content, "STYLE_CSS"):
         return Response(static_content.STYLE_CSS, mimetype="text/css")
-    return send_from_directory(str(BASE_DIR / "public"), "style.css")
+    return "Not found", 404
 
 @app.route("/app.js")
 def app_js():
     pub_file = BASE_DIR / "public" / "app.js"
     if pub_file.exists():
         return send_from_directory(str(BASE_DIR / "public"), "app.js")
+    api_pub = BASE_DIR / "api" / "public" / "app.js"
+    if api_pub.exists():
+        return send_from_directory(str(BASE_DIR / "api" / "public"), "app.js")
     if static_content and hasattr(static_content, "APP_JS"):
         return Response(static_content.APP_JS, mimetype="application/javascript")
-    return send_from_directory(str(BASE_DIR / "public"), "app.js")
+    return "Not found", 404
 
 
 
@@ -224,9 +233,166 @@ def list_transactions():
     txs = db.get_recent_transactions(limit)
     return jsonify(txs)
 
+@app.after_request
+def set_cache_headers(response):
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
 # ------------------------------------------------------------
-#  AUTHENTICATION & ROLE-BASED ACCESS
+#  AI CHATBOT ENGINE (MENSTRUAL HYGIENE & MACHINE ASSISTANT)
 # ------------------------------------------------------------
+
+def generate_bot_reply(msg: str, lang: str = "en") -> str:
+    m = msg.lower().strip()
+    is_hindi = lang.startswith("hi") or any(word in m for word in [
+        "hindi", "namaste", "pad", "mahina", "dard", "kaise", "istamal", "kya", "madad", "puchna", "batao", "pehno"
+    ])
+
+    if any(k in m for k in ["how often", "change", "replace", "how many hours", "kitne ghante", "kab badal", "कब बदल", "घंटे", "बदलें"]):
+        if is_hindi:
+            return (
+                "🩸 **पैड कब बदलें?**\n\n"
+                "• सेनेटरी पैड को हर **4 से 6 घंटे** में अवश्य बदलें, चाहे फ्लो कम ही क्यों न हो।\n"
+                "• एक ही पैड को लंबे समय तक लगाने से बैक्टीरिया, रैशेज और इन्फेक्शन (UTI) का खतरा बढ़ता है।\n"
+                "• भारी दिनों (Heavy flow) में इसे और जल्दी बदलें।"
+            )
+        return (
+            "🩸 **How Often to Change Your Pad:**\n\n"
+            "• Change your sanitary pad every **4 to 6 hours**, even if your flow seems light.\n"
+            "• Wearing a pad for too long promotes bacterial growth, odor, rashes, and urinary tract infections (UTI).\n"
+            "• On heavier days, inspect and replace it every 3 to 4 hours."
+        )
+
+    if any(k in m for k in ["cramp", "pain", "dard", "stomach", "relief", "pet dard", "दर्द", "कष्ट", "राहत", "क्रैम्प"]):
+        if is_hindi:
+            return (
+                "🌿 **पीरियड्स के दर्द (क्रैम्प्स) से राहत के उपाय:**\n\n"
+                "1. **गर्म सिकाई**: पेट के निचले हिस्से पर गर्म पानी की थैली (Hot water bottle) रखें।\n"
+                "2. **गुनगुना पानी**: अदरक या अजवाइन का गुनगुना पानी मांसपेशियों को आराम देता है।\n"
+                "3. **हल्की स्ट्रेचिंग**: बालासन (Child's Pose) कमर और पेट का दर्द कम करता है।\n"
+                "4. **हाइड्रेशन**: दिन में 8–10 गिलास पानी पिएं।\n"
+                "⚠️ यदि दर्द अत्यधिक असहनीय हो, तो डॉक्टर से संपर्क करें।"
+            )
+        return (
+            "🌿 **Relief Tips for Menstrual Cramps:**\n\n"
+            "1. **Heat Therapy**: Apply a warm heating pad or hot water bottle to your lower abdomen.\n"
+            "2. **Warm Hydration**: Sip warm water or ginger tea to ease abdominal spasms.\n"
+            "3. **Gentle Stretching**: Poses like Child's Pose (Balasana) relieve pelvic pressure.\n"
+            "4. **Magnesium & Nutrients**: Bananas and leafy greens help soothe muscle contractions.\n"
+            "⚠️ Consult a medical professional if pain is unusually severe."
+        )
+
+    if any(k in m for k in ["dispose", "throw", "dustbin", "flush", "fenk", "disposal", "फेंक", "निपटान", "कूड़ा", "डस्टबिन"]):
+        if is_hindi:
+            return (
+                "🗑️ **पैड का सुरक्षित निपटान (Safe Disposal):**\n\n"
+                "• **कभी भी फ्लश न करें**: सेनेटरी पैड टॉयलेट में न डालें, इससे पाइप जाम हो जाते हैं।\n"
+                "• इस्तेमाल किए पैड को अखबार या कवर में अच्छी तरह लपेटें।\n"
+                "• हमेशा ढक्कन वाले कूड़ेदान (Sanitary Bin) या भस्मीकरण यंत्र में डालें।\n"
+                "• हाथ साबुन से धोना न भूलें।"
+            )
+        return (
+            "🗑️ **Safe & Hygienic Pad Disposal:**\n\n"
+            "• **Never flush pads**: Pads do not dissolve and will cause severe plumbing blockages.\n"
+            "• Wrap the used pad tightly in newspaper or its replacement wrapper.\n"
+            "• Dispose of it in a designated covered sanitary bin or incinerator.\n"
+            "• Always wash your hands thoroughly with soap afterward."
+        )
+
+    if any(k in m for k in ["tracker", "cycle", "irregular", "ovulation", "date", "phase", "next period", "din", "मासिक", "चक्र", "ट्रैकर", "तारीख"]):
+        if is_hindi:
+            return (
+                "📅 **मासिक धर्म चक्र और पीरियड ट्रैकर:**\n\n"
+                "• एक सामान्य मासिक चक्र **21 से 35 दिन** (औसतन 28 दिन) का होता है।\n"
+                "• आप HygieNet के **Period Tracker** में पिछले पीरियड की तारीख दर्ज कर अगले पीरियड का समय जान सकती हैं।\n"
+                "• पीरियड से 2-3 दिन पहले ही मशीन से पैड्स कलेक्ट कर तैयार रहें!"
+            )
+        return (
+            "📅 **Understanding Your Menstrual Cycle:**\n\n"
+            "• A typical cycle lasts **21 to 35 days** (averaging 28 days).\n"
+            "• **Menstrual Phase (Days 1–5)**: Active bleeding, rest and hygiene prioritized.\n"
+            "• **Follicular & Ovulation (Days 6–16)**: Energy peaks, fertile window.\n"
+            "• **Luteal Phase (Days 17–28)**: PMS may occur, preparing for next cycle.\n"
+            "• Use our interactive **Period Tracker** below to log your date and receive pad readiness reminders!"
+        )
+
+    if any(k in m for k in ["machine", "dispense", "how to use", "vending", "collect", "button", "tap", "मशीन", "निकाल", "प्रयोग"]):
+        if is_hindi:
+            return (
+                "⚙️ **HygieNet मशीन से पैड कैसे निकालें?**\n\n"
+                "1. **कार्ड टैप करें**: अपना RFID कार्ड मशीन के स्कैनर पर लगाएं।\n"
+                "2. **संख्या चुनें**: आगे लगे **+ / -** बटन से आवश्यक पैड संख्या चुनें।\n"
+                "3. **CONFIRM दबाएं**: सर्वो मोटर पैड को नीचे ट्रे में निकाल देगी।\n"
+                "4. **कलेक्ट करें**: ट्रे से सुरक्षित पैड प्राप्त करें!"
+            )
+        return (
+            "⚙️ **How to Use the HygieNet Vending Machine:**\n\n"
+            "1. **Tap Card**: Place your RFID card on the reader.\n"
+            "2. **Select Quantity**: Press the **(+)** button on the panel to choose your pad count.\n"
+            "3. **Press CONFIRM**: The dual-servo mechanism will drop the pads into the collection tray.\n"
+            "4. **Collect**: Retrieve your sanitary pads safely from the dispenser hopper!"
+        )
+
+    if any(k in m for k in ["quota", "limit", "remaining", "how many", "points", "free", "कोटा", "बचे", "संख्या"]):
+        if is_hindi:
+            return (
+                "📦 **पैड कोटा और आवंटन नियम:**\n\n"
+                "• प्रत्येक पंजीकृत लाभार्थी को प्रति माह **5 पैड** का कोटा मिलता है।\n"
+                "• यह कोटा हर महीने की शुरुआत में रीसेट होता है।\n"
+                "• पोर्टल पर लॉगिन करके आप अपने बचे हुए पैड्स देख सकती हैं।"
+            )
+        return (
+            "📦 **Pad Quota & Allocation:**\n\n"
+            "• Each registered beneficiary receives an allocation (default **5 pads per month**).\n"
+            "• Quotas renew every monthly cycle.\n"
+            "• Check your live remaining balance anytime right on your Beneficiary Portal!"
+        )
+
+    if is_hindi:
+        return (
+            "नमस्ते! मैं **HygieBot** हूँ — आपकी स्वास्थ्य और HygieNet सहायता सहेली।\n\n"
+            "आप मुझसे पूछ सकती हैं:\n"
+            "• 'पैड कब बदलना चाहिए?'\n"
+            "• 'पीरियड्स के दर्द से राहत के उपाय'\n"
+            "• 'पैड का सही निपटान कैसे करें?'\n"
+            "• 'मशीन से पैड कैसे निकालें?'\n\n"
+            "बताइए, मैं आपकी क्या सहायता करूँ?"
+        )
+    return (
+        "Hello! I am **HygieBot**, your menstrual health & HygieNet assistant.\n\n"
+        "Feel free to ask me about:\n"
+        "• 'When should I change my sanitary pad?'\n"
+        "• 'Tips for menstrual cramps & pain relief'\n"
+        "• 'Safe hygienic disposal guidelines'\n"
+        "• 'How to track your cycle with the Period Tracker'\n"
+        "• 'How to use the HygieNet vending machine'\n\n"
+        "How can I help you today?"
+    )
+
+@app.route("/api/chat", methods=["POST"])
+def ai_chat():
+    data = request.get_json(silent=True) or {}
+    message = data.get("message", "").strip()
+    lang = data.get("lang", "en").lower()
+    reply = generate_bot_reply(message, lang)
+    return jsonify({"reply": reply})
+
+@app.route("/api/user/<uid>/cycle", methods=["GET", "POST"])
+def user_cycle_endpoint(uid):
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        last_date = data.get("last_period_date", "")
+        cycle_len = int(data.get("cycle_length", 28))
+        period_dur = int(data.get("period_duration", 5))
+        ok = db.update_user_cycle(uid, last_date, cycle_len, period_dur)
+        if ok:
+            return jsonify({"success": True, "message": "Cycle tracker settings saved."})
+        return jsonify({"success": False, "message": "Failed to save cycle settings."}), 400
+
+    cycle = db.get_user_cycle(uid)
+    return jsonify({"success": True, "cycle_data": cycle})
 
 @app.route("/api/auth/login", methods=["POST"])
 def auth_login():
@@ -258,47 +424,53 @@ def auth_login():
     if not user:
         return jsonify({"success": False, "message": f"Beneficiary card '{user_uid}' is not registered."}), 404
     
+    actual_uid = user.get("rfid_uid", user_uid)
     limit = user.get("monthly_limit", DEFAULT_MONTHLY_LIMIT)
     used = user.get("used_pads", 0)
     remaining = max(0, limit - used)
+    cycle = db.get_user_cycle(actual_uid)
     
     return jsonify({
         "success": True,
         "role": "user",
         "user": {
             "name": user.get("name", "Beneficiary"),
-            "rfid_uid": user_uid,
+            "rfid_uid": actual_uid,
             "monthly_limit": limit,
             "used_pads": used,
             "remaining": remaining,
             "active": user.get("active", True),
-            "last_dispensed_at": str(user.get("last_dispensed_at", ""))
+            "last_dispensed_at": str(user.get("last_dispensed_at", "")),
+            "cycle_data": cycle
         },
         "message": f"Welcome back, {user.get('name', 'Beneficiary')}."
     })
 
 @app.route("/api/user/<uid>", methods=["GET"])
 def get_user_profile(uid):
-    uid = uid.strip().upper()
     user = db.get_user_by_uid(uid)
     if not user:
         return jsonify({"success": False, "message": "Beneficiary not found"}), 404
     
+    actual_uid = user.get("rfid_uid", uid)
     limit = user.get("monthly_limit", DEFAULT_MONTHLY_LIMIT)
     used = user.get("used_pads", 0)
     remaining = max(0, limit - used)
+    cycle = db.get_user_cycle(actual_uid)
     return jsonify({
         "success": True,
         "user": {
             "name": user.get("name", "Beneficiary"),
-            "rfid_uid": uid,
+            "rfid_uid": actual_uid,
             "monthly_limit": limit,
             "used_pads": used,
             "remaining": remaining,
             "active": user.get("active", True),
-            "last_dispensed_at": str(user.get("last_dispensed_at", ""))
+            "last_dispensed_at": str(user.get("last_dispensed_at", "")),
+            "cycle_data": cycle
         }
     })
+
 
 @app.route("/api/user/<uid>/transactions", methods=["GET"])
 def get_user_transactions(uid):

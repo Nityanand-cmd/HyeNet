@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=2.5">
 </head>
 <body>
   <!-- Ambient background glow effects -->
@@ -125,7 +125,7 @@
 
             <div class="quick-cards-group">
               <span class="quick-cards-label">Quick select registered cards:</span>
-              <div class="quick-pills">
+              <div class="quick-pills" id="quick-pills-container">
                 <button type="button" class="quick-pill" onclick="quickFillUid('C3:27:87:14')">
                   <span>Sunita Yadav</span>
                   <code>C3:27:87:14</code>
@@ -405,6 +405,127 @@
           </section>
         </div>
 
+        <!-- Period & Menstrual Cycle Tracker Card -->
+        <section class="content-card card-glass cycle-tracker-card" style="margin-top: 24px;">
+          <div class="card-toolbar">
+            <div class="card-title-group">
+              <div class="tracker-title-wrap">
+                <div class="tracker-icon-pulse">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path>
+                  </svg>
+                </div>
+                <div>
+                  <h3>Personal Period & Cycle Health Tracker</h3>
+                  <p>Track your menstrual cycle, monitor phases, and get smart pad readiness reminders</p>
+                </div>
+              </div>
+            </div>
+            <div class="card-actions">
+              <span class="badge badge-emerald" id="cycle-phase-badge">Menstrual Phase</span>
+            </div>
+          </div>
+
+          <div class="tracker-grid">
+            <!-- Left Column: Cycle Visual Wheel & Predictions -->
+            <div class="cycle-overview-panel">
+              <div class="cycle-gauge-container">
+                <svg class="cycle-gauge-svg" viewBox="0 0 160 160">
+                  <circle class="cycle-gauge-bg" cx="80" cy="80" r="68"></circle>
+                  <circle class="cycle-gauge-fill" id="cycle-gauge-fill" cx="80" cy="80" r="68"></circle>
+                </svg>
+                <div class="cycle-gauge-content">
+                  <span class="cycle-gauge-day-num" id="cycle-day-num">Day 1</span>
+                  <span class="cycle-gauge-day-label" id="cycle-day-label">of 28 Day Cycle</span>
+                  <span class="cycle-gauge-subtext" id="cycle-countdown-text">Starts in -- days</span>
+                </div>
+              </div>
+
+              <div class="cycle-meta-stats">
+                <div class="cycle-stat-chip">
+                  <span class="chip-label">Next Estimated Period</span>
+                  <strong class="chip-val" id="cycle-next-date">--</strong>
+                </div>
+                <div class="cycle-stat-chip">
+                  <span class="chip-label">Current Cycle Phase</span>
+                  <strong class="chip-val text-emerald" id="cycle-phase-name">Menstrual Phase</strong>
+                </div>
+              </div>
+            </div>
+
+            <!-- Right Column: Settings & Smart HygieNet Pad Readiness Alert -->
+            <div class="cycle-details-panel">
+              <!-- Smart HygieNet Pad Readiness Banner -->
+              <div class="pad-readiness-banner" id="pad-readiness-banner">
+                <div class="banner-icon">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect>
+                    <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
+                  </svg>
+                </div>
+                <div class="banner-info">
+                  <strong id="readiness-title">HygieNet Machine Pad Readiness</strong>
+                  <p id="readiness-desc">Syncing with your dispenser quota...</p>
+                </div>
+              </div>
+
+              <!-- Phase Explanation Card -->
+              <div class="phase-info-box" id="phase-info-box">
+                <div class="phase-header">
+                  <span class="phase-dot" id="phase-color-dot"></span>
+                  <strong id="phase-detail-title">About this Phase</strong>
+                </div>
+                <p id="phase-detail-desc">Loading cycle insights...</p>
+              </div>
+
+              <!-- Cycle Parameters Form -->
+              <form class="cycle-settings-form" id="cycle-settings-form" onsubmit="handleCycleSettingsSave(event)">
+                <div class="cycle-form-row">
+                  <div class="form-group">
+                    <label for="cycle-last-date">Last Period Start Date</label>
+                    <input type="date" id="cycle-last-date" class="form-input" required>
+                  </div>
+                  <div class="form-group">
+                    <label for="cycle-length-input">Cycle Length (Days)</label>
+                    <input type="number" id="cycle-length-input" class="form-input" min="20" max="45" value="28" required>
+                  </div>
+                  <div class="form-group">
+                    <label for="period-duration-input">Period Duration (Days)</label>
+                    <input type="number" id="period-duration-input" class="form-input" min="2" max="10" value="5" required>
+                  </div>
+                </div>
+                <button type="submit" class="btn btn-secondary btn-sm" id="btn-save-cycle">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                    <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                    <polyline points="7 3 7 8 15 8"></polyline>
+                  </svg>
+                  Save & Recalculate Cycle
+                </button>
+              </form>
+            </div>
+          </div>
+
+          <!-- Cycle Timeline Bar -->
+          <div class="cycle-timeline-wrap">
+            <div class="timeline-bar-labels">
+              <span class="lbl-phase phase-menstrual">🩸 Menstrual (Days 1–5)</span>
+              <span class="lbl-phase phase-follicular">🌱 Follicular (Days 6–13)</span>
+              <span class="lbl-phase phase-ovulation">✨ Ovulation (Days 14–16)</span>
+              <span class="lbl-phase phase-luteal">🌙 Luteal (Days 17–28)</span>
+            </div>
+            <div class="cycle-timeline-bar">
+              <div class="segment seg-menstrual" style="width: 17.8%"></div>
+              <div class="segment seg-follicular" style="width: 28.6%"></div>
+              <div class="segment seg-ovulation" style="width: 10.7%"></div>
+              <div class="segment seg-luteal" style="width: 42.9%"></div>
+              <div class="timeline-indicator-needle" id="timeline-needle" style="left: 0%">
+                <div class="needle-tip">Today</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <!-- Personal Dispense History Table -->
         <section class="content-card card-glass" style="margin-top: 24px;">
           <div class="card-toolbar">
@@ -466,9 +587,83 @@
     </div>
   </div>
 
+  <!-- Floating AI Chatbot Launcher -->
+  <button class="chat-fab-launcher" id="chat-fab-launcher" onclick="toggleChatWindow()" title="Open HygieBot AI Health Assistant">
+    <div class="fab-icon-wrap">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+      </svg>
+      <span class="fab-pulse-dot"></span>
+    </div>
+    <span class="fab-label">HygieBot AI</span>
+  </button>
+
+  <!-- AI Chatbot Window Drawer -->
+  <div class="chat-window-box card-glass hidden" id="chat-window">
+    <!-- Chat Header -->
+    <div class="chat-header">
+      <div class="chat-header-info">
+        <div class="chat-avatar-bot">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+          </svg>
+        </div>
+        <div>
+          <div class="chat-bot-title">HygieBot <span>AI</span></div>
+          <div class="chat-bot-sub">Menstrual Health & Dispenser Saheli</div>
+        </div>
+      </div>
+      <div class="chat-header-actions">
+        <button type="button" class="chat-lang-btn" id="chat-lang-btn" onclick="toggleChatLanguage()" title="Toggle Language (English / Hindi)">
+          <span id="chat-lang-flag">🇮🇳</span> <span id="chat-lang-label">हिन्दी</span>
+        </button>
+        <button type="button" class="chat-close-btn" onclick="toggleChatWindow()" title="Close Chat">✕</button>
+      </div>
+    </div>
+
+    <!-- Chat Quick Suggestion Chips -->
+    <div class="chat-chips-scroll" id="chat-quick-chips">
+      <button type="button" class="chat-chip" onclick="handleChipClick(this)">🩸 Pad change guide</button>
+      <button type="button" class="chat-chip" onclick="handleChipClick(this)">🌿 Period cramp relief</button>
+      <button type="button" class="chat-chip" onclick="handleChipClick(this)">🗑️ Safe pad disposal</button>
+      <button type="button" class="chat-chip" onclick="handleChipClick(this)">⚙️ How to use machine</button>
+      <button type="button" class="chat-chip" onclick="handleChipClick(this)">📅 Menstrual cycle phases</button>
+    </div>
+
+    <!-- Chat Messages Stream -->
+    <div class="chat-messages-container" id="chat-messages">
+      <div class="chat-msg msg-bot">
+        <div class="msg-bubble">
+          👋 Hello! I am <strong>HygieBot AI</strong>, your menstrual health advisor and HygieNet vending assistant.<br><br>
+          Ask me any questions about cramps, menstrual hygiene, pad changes, or how to use the HygieNet vending machine!
+        </div>
+        <span class="msg-time">Just now</span>
+      </div>
+    </div>
+
+    <!-- Typing Indicator (Hidden by default) -->
+    <div class="chat-typing-indicator hidden" id="chat-typing">
+      <span class="typing-dot"></span>
+      <span class="typing-dot"></span>
+      <span class="typing-dot"></span>
+      <span class="typing-label">HygieBot is thinking...</span>
+    </div>
+
+    <!-- Chat Input Form -->
+    <form class="chat-input-row" id="chat-form" onsubmit="handleSendChatMessage(event)">
+      <input type="text" id="chat-user-input" class="chat-text-input" placeholder="Type a message or question..." autocomplete="off" required>
+      <button type="submit" class="btn btn-primary chat-send-btn" id="btn-chat-send" title="Send Message">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="22" y1="2" x2="11" y2="13"></line>
+          <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+        </svg>
+      </button>
+    </form>
+  </div>
+
   <!-- Toast Notification Container -->
   <div class="toast-container" id="toast-container"></div>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=2.5"></script>
 </body>
 </html>
