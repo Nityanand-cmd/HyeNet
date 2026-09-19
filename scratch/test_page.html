@@ -1,0 +1,1245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<script>
+window.__caught_errors = [];
+window.onerror = function(msg, url, line, col, err) {
+  var errObj = {msg: msg, url: url, line: line, col: col, stack: err ? err.stack : ''};
+  window.__caught_errors.push(errObj);
+  var el = document.getElementById('error-debug-dump');
+  if (!el) {
+    el = document.createElement('pre');
+    el.id = 'error-debug-dump';
+    el.style = 'background:red;color:white;padding:20px;z-index:999999;position:fixed;top:0;left:0;width:100%;';
+    document.body ? document.body.appendChild(el) : document.documentElement.appendChild(el);
+  }
+  el.innerText += JSON.stringify(errObj, null, 2) + '\n';
+};
+</script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HygieNet Cloud — IoT Sanitary Vending Management System</title>
+  <meta name="description" content="Next-Gen Cloud IoT Sanitary Vending Machine Management System with Admin, Beneficiary & Refill Staff Portals, powered by Arduino UNO R4 WiFi and MongoDB Atlas.">
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#10b981">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css?v=3.4">
+</head>
+<body>
+  <!-- Ambient background glow effects -->
+  <div class="ambient-glow glow-1"></div>
+  <div class="ambient-glow glow-2"></div>
+
+  <div class="app-shell">
+    <!-- Top Navigation Bar -->
+    <header class="top-nav">
+      <div class="brand-group">
+        <div class="brand-logo">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <div class="brand-title">HygieNet <span>Cloud</span></div>
+          <div class="brand-subtitle">IoT Sanitary Solution • MMMUT Gorakhpur</div>
+        </div>
+      </div>
+
+      <div class="nav-status-items">
+        <!-- Live Machine Hopper Stock Pill -->
+        <div class="status-pill nav-hopper-pill" id="nav-hopper-pill" title="Current Machine Hopper Stock">
+          <span class="status-indicator-dot online" id="nav-hopper-dot"></span>
+          <span id="nav-hopper-text">Hopper: 50 Pads</span>
+        </div>
+
+        <div class="status-pill" id="cloud-status-pill">
+          <span class="status-indicator-dot online"></span>
+          <span id="cloud-status-text">Cloud Sync Live</span>
+        </div>
+
+        <div class="role-badge-pill" id="nav-user-pill" style="display: none;">
+          <span class="role-avatar" id="nav-user-avatar">A</span>
+          <span class="role-name" id="nav-user-name">Admin</span>
+        </div>
+
+        <button class="btn btn-secondary btn-sm" id="btn-theme-toggle" onclick="toggleTheme()" title="Toggle Dark / Light Mode">
+          <span id="theme-icon">☀️</span>
+          <span id="theme-label">Light</span>
+        </button>
+
+        <button class="btn btn-secondary btn-sm" id="btn-refresh" onclick="refreshCurrentView()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <polyline points="1 20 1 14 7 14"></polyline>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+          </svg>
+          Sync
+        </button>
+
+        <button class="btn btn-primary btn-sm" id="btn-auth-action" onclick="handleAuthAction()">
+          Sign In
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="main-container">
+
+      <!-- ============================================================ -->
+      <!--  VIEW 1: AUTHENTICATION SCREEN                               -->
+      <!-- ============================================================ -->
+      <section class="auth-wrapper" id="view-auth">
+        <div class="auth-card card-glass">
+          <div class="auth-header">
+            <div class="auth-icon-badge">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+              </svg>
+            </div>
+            <h2>HygieNet Portal Access</h2>
+            <p>Select your account type to sign in or request card allotment</p>
+          </div>
+
+          <!-- Auth Tab Switcher (Admin / Beneficiary / Restock Staff) -->
+          <div class="auth-tabs">
+            <button class="auth-tab-btn active" id="tab-btn-admin" onclick="switchAuthTab('admin')">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+              Admin
+            </button>
+            <button class="auth-tab-btn" id="tab-btn-user" onclick="switchAuthTab('user')">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"></rect><line x1="2" y1="10" x2="22" y2="10"></line></svg>
+              Beneficiary
+            </button>
+            <button class="auth-tab-btn" id="tab-btn-refill" onclick="switchAuthTab('refill')">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+              Restock Staff
+            </button>
+          </div>
+
+          <!-- Admin Login Form -->
+          <form class="auth-form" id="admin-login-form" onsubmit="handleAdminLogin(event)">
+            <div class="form-group">
+              <label for="admin-id">Admin ID</label>
+              <div class="input-with-icon">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                <input type="text" id="admin-id" class="form-input" placeholder="Enter admin username" value="admin" required autocomplete="username">
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="admin-password">Password</label>
+              <div class="input-with-icon">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                <input type="password" id="admin-password" class="form-input" placeholder="Enter admin password" value="admin123" required autocomplete="current-password">
+              </div>
+              <span class="field-hint">Default credentials: ID <code>admin</code> • Password <code>admin123</code></span>
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-block btn-lg" id="btn-admin-submit">
+              Sign In as Administrator
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+            </button>
+          </form>
+
+          <!-- Beneficiary Login Form -->
+          <form class="auth-form hidden" id="user-login-form" onsubmit="handleUserLogin(event)">
+            <div class="form-group">
+              <label for="beneficiary-uid">RFID Card UID / Beneficiary ID</label>
+              <div class="input-with-icon">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"></rect><line x1="2" y1="10" x2="22" y2="10"></line></svg>
+                <input type="text" id="beneficiary-uid" class="form-input font-mono" placeholder="e.g. C3:27:87:14" required autocomplete="off">
+              </div>
+              <span class="field-hint">Enter the 8-10 character hexadecimal code on your beneficiary card</span>
+            </div>
+
+            <div class="quick-cards-group">
+              <span class="quick-cards-label">Quick select registered cards:</span>
+              <div class="quick-pills" id="quick-pills-container">
+                <button type="button" class="quick-pill" onclick="quickFillUid('C3:27:87:14')">
+                  <span>Sunita Yadav</span>
+                  <code>C3:27:87:14</code>
+                </button>
+                <button type="button" class="quick-pill" onclick="quickFillUid('E3:A5:AE:02')">
+                  <span>Anita Kumari</span>
+                  <code>E3:A5:AE:02</code>
+                </button>
+              </div>
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-block btn-lg" id="btn-user-submit">
+              Access My Account & Quota
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+            </button>
+
+            <!-- New Student Registration Option -->
+            <div class="registration-cta-box">
+              <div class="reg-cta-text">
+                <strong>New student or lost card?</strong>
+                <span>Request card registration using Aadhaar number & OTP verification.</span>
+              </div>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="openRegisterModal()">
+                Request Card Registration &rarr;
+              </button>
+            </div>
+          </form>
+
+          <!-- Restock Staff Login Form -->
+          <form class="auth-form hidden" id="refill-login-form" onsubmit="handleRefillLogin(event)">
+            <div class="form-group">
+              <label for="refill-id">Restock Attendant ID</label>
+              <div class="input-with-icon">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                <input type="text" id="refill-id" class="form-input" placeholder="Enter staff username" value="refill" required autocomplete="username">
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="refill-password">Password</label>
+              <div class="input-with-icon">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                <input type="password" id="refill-password" class="form-input" placeholder="Enter staff password" value="refill123" required autocomplete="current-password">
+              </div>
+              <span class="field-hint">Staff credentials: ID <code>refill</code> • Password <code>refill123</code></span>
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-block btn-lg" id="btn-refill-submit">
+              Sign In as Restock Staff
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+            </button>
+          </form>
+
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
+      <!--  VIEW 2: ADMIN MANAGEMENT DASHBOARD                          -->
+      <!-- ============================================================ -->
+      <div class="admin-dashboard-view hidden" id="view-admin">
+        
+        <!-- Metrics Overview Cards -->
+        <section class="metrics-grid">
+          <div class="metric-card">
+            <div class="metric-header">
+              <span class="metric-label">Total Dispensed</span>
+              <div class="metric-icon icon-emerald">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path></svg>
+              </div>
+            </div>
+            <div class="metric-value" id="stat-total-dispensed">0</div>
+            <div class="metric-trend"><span class="trend-highlight">Pads</span> lifetime delivered</div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-header">
+              <span class="metric-label">Today's Transactions</span>
+              <div class="metric-icon icon-teal">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+              </div>
+            </div>
+            <div class="metric-value" id="stat-today-tx">0</div>
+            <div class="metric-trend"><span class="trend-highlight">Scans</span> logged today</div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-header">
+              <span class="metric-label">Beneficiaries</span>
+              <div class="metric-icon icon-cyan">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+              </div>
+            </div>
+            <div class="metric-value" id="stat-active-users">0</div>
+            <div class="metric-trend"><span class="trend-highlight">Registered</span> RFID cards</div>
+          </div>
+
+          <!-- Machine Hopper Stock Metric Card -->
+          <div class="metric-card">
+            <div class="metric-header">
+              <span class="metric-label">Machine Hopper Stock</span>
+              <div class="metric-icon icon-emerald">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+              </div>
+            </div>
+            <div class="metric-value" id="stat-hopper-count">50</div>
+            <div class="metric-trend"><span class="trend-highlight" id="stat-hopper-badge">50 / 60 Pads</span> • Dispenser Ready</div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-header">
+              <span class="metric-label">Monthly Pad Limit</span>
+              <div class="metric-icon icon-indigo">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+              </div>
+            </div>
+            <div class="metric-value" id="stat-monthly-limit">5</div>
+            <div class="metric-trend"><span class="trend-highlight">Quota</span> per beneficiary / month</div>
+          </div>
+        </section>
+
+        <!-- Database Status Banner -->
+        <section class="banner-card" id="db-status-banner">
+          <div class="banner-content">
+            <div class="banner-badge" id="db-badge">MongoDB Atlas Cloud</div>
+            <div class="banner-title" id="db-title">Cloud Storage Connected</div>
+            <div class="banner-desc" id="db-desc">Synchronized in real-time with MongoDB Atlas cluster. Arduino UNO R4 WiFi live telemetry active.</div>
+          </div>
+          <div class="banner-actions">
+            <span class="device-chip" id="admin-device-chip">
+              <span class="status-indicator-dot pulse-emerald"></span>
+              <span id="admin-device-text">UNO R4 WiFi: Ready</span>
+            </span>
+          </div>
+        </section>
+
+        <!-- ADMIN ACTION & VERIFICATION QUEUES (Refills, Emergency, Allotments) -->
+        <section class="admin-queues-section">
+          <div class="section-title-wrap">
+            <h3>Admin Verifications & Quota Actions</h3>
+            <p>Review staff restock photo proofs, allot cards to Aadhaar-verified students, and approve emergency pads</p>
+          </div>
+
+          <div class="three-col-grid">
+            <!-- 1. Pending Refill Verifications (with Proof Photos) -->
+            <div class="queue-card card-glass">
+              <div class="queue-header">
+                <div class="queue-badge-title">
+                  <span class="queue-dot orange"></span>
+                  <h4>Pending Refill Proofs</h4>
+                </div>
+                <div style="display:flex; align-items:center; gap:6px;">
+                  <button class="btn btn-secondary btn-sm" style="padding: 2px 8px; font-size: 11px;" onclick="handleClearAllRefills()" title="Clear all restock submissions">Clear All</button>
+                  <span class="badge badge-warn" id="badge-pending-refills-count">0</span>
+                </div>
+              </div>
+              <p class="queue-desc">Review uploaded photo proofs of machine hopper replenishment before crediting stock.</p>
+              <div class="queue-items-container" id="admin-refill-requests-list">
+                <div class="text-center text-muted py-3">No pending refill logs to verify</div>
+              </div>
+            </div>
+
+            <!-- 2. Pending Student Card Allotments (Aadhaar Verified) -->
+            <div class="queue-card card-glass">
+              <div class="queue-header">
+                <div class="queue-badge-title">
+                  <span class="queue-dot green"></span>
+                  <h4>Student Card Allotments</h4>
+                </div>
+                <span class="badge badge-emerald" id="badge-pending-allotments-count">0</span>
+              </div>
+              <p class="queue-desc">Students who completed Aadhaar checksum & OTP verification waiting for physical RFID cards.</p>
+              <div class="queue-items-container" id="admin-allotments-requests-list">
+                <div class="text-center text-muted py-3">No students awaiting card allotment</div>
+              </div>
+            </div>
+
+            <!-- 3. Emergency Pad Quota Requests -->
+            <div class="queue-card card-glass">
+              <div class="queue-header">
+                <div class="queue-badge-title">
+                  <span class="queue-dot red"></span>
+                  <h4>Emergency Pad Requests</h4>
+                </div>
+                <span class="badge badge-err" id="badge-emergency-requests-count">0</span>
+              </div>
+              <p class="queue-desc">Urgent pad requests from students who have exhausted their regular monthly quota.</p>
+              <div class="queue-items-container" id="admin-emergency-requests-list">
+                <div class="text-center text-muted py-3">No emergency requests active</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- MONTHLY DISPENSE BREAKDOWN & SIMULATED ROLLOVER CARD -->
+        <section class="content-card card-glass" id="monthly-summary-card">
+          <div class="card-toolbar">
+            <div class="card-title-group">
+              <div class="title-with-pill">
+                <h3>Monthly Dispense Summary</h3>
+                <span class="badge badge-emerald" id="current-month-badge">Month --</span>
+              </div>
+              <p>Historical dispense volume and testing rollover controls</p>
+            </div>
+            <div class="card-actions">
+              <button class="btn btn-warn-subtle btn-sm" onclick="confirmSimulateMonthRollover()" title="Simulate a new month for testing: archives current stats and resets all quotas to 0">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>
+                Simulate New Month Rollover (Test Reset)
+              </button>
+            </div>
+          </div>
+
+          <div class="monthly-stats-grid">
+            <div class="monthly-stat-item">
+              <span class="lbl">Current Month Dispensed:</span>
+              <strong class="val" id="month-stat-current-dispensed">0 pads</strong>
+            </div>
+            <div class="monthly-stat-item">
+              <span class="lbl">Unique Students Served:</span>
+              <strong class="val" id="month-stat-unique-users">0</strong>
+            </div>
+            <div class="monthly-stat-item">
+              <span class="lbl">Avg Pads / Dispense:</span>
+              <strong class="val" id="month-stat-avg-qty">1.0</strong>
+            </div>
+          </div>
+
+          <div class="table-responsive" style="margin-top: 14px;">
+            <table class="data-table" id="monthly-summary-table">
+              <thead>
+                <tr>
+                  <th>Month No.</th>
+                  <th>Month & Year</th>
+                  <th>Total Dispensed</th>
+                  <th>Transactions</th>
+                  <th>Beneficiaries Served</th>
+                </tr>
+              </thead>
+              <tbody id="monthly-summary-tbody">
+                <tr><td colspan="5" class="text-center text-muted py-3">Loading monthly summary...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Main Two Column Grid: Users and Transactions -->
+        <div class="two-col-grid">
+          
+          <!-- Beneficiaries Management Card -->
+          <section class="content-card card-glass">
+            <div class="card-toolbar">
+              <div class="card-title-group">
+                <h3>Registered Beneficiaries</h3>
+                <p>Manage cards, Aadhaar numbers, pad quotas, and reset allocations</p>
+              </div>
+              <div class="card-actions">
+                <button class="btn btn-primary btn-sm" onclick="openAddUserModal()">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                  Add Beneficiary
+                </button>
+                <button class="btn btn-danger-subtle btn-sm" onclick="confirmResetAll()">
+                  Reset Monthly
+                </button>
+              </div>
+            </div>
+
+            <!-- Table Search Bar -->
+            <div class="table-search-box">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+              <input type="text" id="user-search-input" placeholder="Search by name, Aadhaar or card UID..." oninput="handleUserSearch(this.value)">
+            </div>
+
+            <div class="table-responsive">
+              <table class="data-table" id="users-table">
+                <thead>
+                  <tr>
+                    <th>Beneficiary</th>
+                    <th>Aadhaar No</th>
+                    <th>RFID UID</th>
+                    <th>Quota Used</th>
+                    <th>Remaining</th>
+                    <th>Status</th>
+                    <th class="text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="users-tbody">
+                  <tr><td colspan="7" class="text-center text-muted py-4">Loading registered beneficiaries...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <!-- Transactions Ledger Card -->
+          <section class="content-card card-glass">
+            <div class="card-toolbar">
+              <div class="card-title-group">
+                <h3>Live Dispense Ledger</h3>
+                <p>Cloud audit log synchronized with Uno R4 WiFi</p>
+              </div>
+              <div class="card-actions">
+                <button class="btn btn-secondary btn-sm" onclick="exportTransactionsCSV()" title="Download CSV report">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                  Export CSV
+                </button>
+                <button class="btn btn-secondary btn-sm" onclick="clearLedgerPrompt()" title="Clear all dispense logs">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                  Clear Ledger
+                </button>
+                <div class="live-pulse-badge">
+                  <span class="status-indicator-dot online"></span>
+                  Live Sync
+                </div>
+              </div>
+            </div>
+
+            <div class="table-responsive">
+              <table class="data-table" id="tx-table">
+                <thead>
+                  <tr>
+                    <th>Beneficiary</th>
+                    <th>UID</th>
+                    <th>Qty</th>
+                    <th>Status</th>
+                    <th>Timestamp</th>
+                  </tr>
+                </thead>
+                <tbody id="tx-tbody">
+                  <tr><td colspan="5" class="text-center text-muted py-4">No dispense activity yet</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <!-- ============================================================ -->
+      <!--  VIEW 3: BENEFICIARY PROFILE & QUOTA PORTAL                  -->
+      <!-- ============================================================ -->
+      <div class="user-portal-view hidden" id="view-user">
+        
+        <!-- Live Machine Hopper Availability Banner -->
+        <section class="machine-hopper-strip" id="user-hopper-banner">
+          <div class="hopper-strip-left">
+            <span class="hopper-indicator-dot online" id="user-hopper-dot"></span>
+            <div>
+              <strong id="user-hopper-label">MMMUT Center #01: 50 Pads in Stock — Dispenser Ready</strong>
+              <div class="hopper-strip-sub" id="user-hopper-sub">Sanitized and stocked • Ready to dispense on RFID tap</div>
+            </div>
+          </div>
+          <div class="hopper-strip-right">
+            <span class="badge badge-emerald" id="user-hopper-stock-badge">50 / 60 Capacity</span>
+          </div>
+        </section>
+
+        <!-- Beneficiary Hero Banner -->
+        <section class="beneficiary-hero card-glass">
+          <div class="beneficiary-hero-content">
+            <div class="beneficiary-avatar" id="user-profile-avatar">S</div>
+            <div class="beneficiary-details">
+              <div class="beneficiary-tag">Registered Beneficiary</div>
+              <h2 class="beneficiary-name" id="user-profile-name">Sunita Yadav</h2>
+              <div class="beneficiary-meta">
+                <span>Card UID: <code class="font-mono" id="user-profile-uid">C3:27:87:14</code></span>
+                <span>•</span>
+                <span id="user-profile-aadhaar-wrap" style="display: none;">Aadhaar: <code class="font-mono" id="user-profile-aadhaar">XXXX XXXX 1234</code> • </span>
+                <span>Unit: MMMUT Center #01</span>
+                <span>•</span>
+                <span id="user-profile-status" class="badge badge-emerald">Active</span>
+              </div>
+            </div>
+          </div>
+          <div class="beneficiary-hero-action">
+            <button class="btn btn-secondary btn-sm" onclick="loadUserProfile()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+              Refresh Quota
+            </button>
+          </div>
+        </section>
+
+        <!-- Quota Progress & Details Cards Grid -->
+        <div class="user-quota-grid">
+          
+          <!-- Card 1: Large Visual Pad Balance -->
+          <section class="quota-highlight-card card-glass">
+            <div class="quota-header">
+              <span class="subheading">Current Monthly Quota</span>
+              <span class="quota-cycle-tag" id="user-quota-cycle">Monthly Cycle</span>
+            </div>
+
+            <div class="quota-balance-display">
+              <div class="quota-ring-wrap">
+                <svg class="quota-svg-ring" viewBox="0 0 120 120">
+                  <circle class="ring-bg" cx="60" cy="60" r="50"></circle>
+                  <circle class="ring-fill" id="user-ring-fill" cx="60" cy="60" r="50"></circle>
+                </svg>
+                <div class="ring-center-text">
+                  <span class="ring-number" id="user-quota-remaining">0</span>
+                  <span class="ring-label">PADS LEFT</span>
+                </div>
+              </div>
+
+              <div class="quota-breakdown">
+                <div class="breakdown-stat">
+                  <span class="stat-lbl">Monthly Quota</span>
+                  <strong class="stat-val" id="user-quota-limit">5 pads</strong>
+                </div>
+                <div class="breakdown-stat">
+                  <span class="stat-lbl">Pads Collected</span>
+                  <strong class="stat-val" id="user-quota-used">0 pads</strong>
+                </div>
+                <div class="breakdown-stat">
+                  <span class="stat-lbl">Remaining Balance</span>
+                  <strong class="stat-val text-emerald" id="user-quota-rem-sub">0 pads</strong>
+                </div>
+              </div>
+            </div>
+
+            <div class="quota-bar-container">
+              <div class="progress-wrap-lg">
+                <div class="progress-bar" id="user-progress-bar" style="width: 0%"></div>
+              </div>
+              <div class="quota-bar-labels">
+                <span>0 pads</span>
+                <span id="user-progress-text">0 / 5 Collected</span>
+                <span id="user-max-label">5 pads</span>
+              </div>
+            </div>
+
+            <!-- Active Temporary Emergency Allowance Notice -->
+            <div class="emergency-quota-banner hidden" id="user-emergency-active-notice" style="background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.35); margin-bottom: 12px; display: none;">
+              <div class="emergency-content">
+                <div class="emergency-icon-wrap" style="background: rgba(16, 185, 129, 0.2); font-size: 1.2rem;">✨</div>
+                <div>
+                  <strong style="color: #34d399;">Temporary Emergency Allowance Granted</strong>
+                  <p id="user-emergency-active-text" style="color: var(--text-dim); margin-top: 2px; font-size: 13px;">You have been granted extra emergency pads for this cycle.</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Emergency Pad Quota Request Banner (Appears when quota is exhausted or urgent) -->
+            <div class="emergency-quota-banner" id="user-emergency-banner">
+              <div class="emergency-content">
+                <div class="emergency-icon-wrap">🚨</div>
+                <div>
+                  <strong>Experiencing an Emergency?</strong>
+                  <p>If your monthly quota is exhausted or you need extra pads immediately, request an emergency allowance.</p>
+                </div>
+              </div>
+              <button class="btn btn-emergency btn-sm" onclick="openEmergencyModal()">
+                Request Emergency Pad
+              </button>
+            </div>
+          </section>
+
+          <!-- Card 2: How to Collect Pads Guide -->
+          <section class="instructions-card card-glass">
+            <h3 class="subheading" style="margin-bottom: 14px;">How to Collect Your Pads at the Machine</h3>
+            <div class="instruction-steps">
+              <div class="step-item">
+                <div class="step-badge">1</div>
+                <div class="step-content">
+                  <strong>Tap your RFID Card</strong>
+                  <p>Hold your card near the reader on the front panel of the HygieNet machine.</p>
+                </div>
+              </div>
+              <div class="step-item">
+                <div class="step-badge">2</div>
+                <div class="step-content">
+                  <strong>Select Quantity</strong>
+                  <p>Press the <strong>+</strong> button to choose 1 or more pads up to your remaining quota.</p>
+                </div>
+              </div>
+              <div class="step-item">
+                <div class="step-badge">3</div>
+                <div class="step-content">
+                  <strong>Press CONFIRM</strong>
+                  <p>The dispenser will automatically deliver your sanitary pads into the dispensing tray.</p>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <!-- Period & Menstrual Cycle Tracker Card -->
+        <section class="content-card card-glass cycle-tracker-card" style="margin-top: 24px;">
+          <div class="card-toolbar">
+            <div class="card-title-group">
+              <div class="tracker-title-wrap">
+                <div class="tracker-icon-pulse">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path>
+                  </svg>
+                </div>
+                <div>
+                  <h3>Personal Period & Cycle Health Tracker</h3>
+                  <p>Track your menstrual cycle, monitor phases, and get smart pad readiness reminders</p>
+                </div>
+              </div>
+            </div>
+            <div class="card-actions">
+              <span class="badge badge-emerald" id="cycle-phase-badge">Menstrual Phase</span>
+            </div>
+          </div>
+
+          <div class="tracker-grid">
+            <!-- Left Column: Cycle Visual Wheel & Predictions -->
+            <div class="cycle-overview-panel">
+              <div class="cycle-gauge-container">
+                <svg class="cycle-gauge-svg" viewBox="0 0 160 160">
+                  <circle class="cycle-gauge-bg" cx="80" cy="80" r="68"></circle>
+                  <circle class="cycle-gauge-fill" id="cycle-gauge-fill" cx="80" cy="80" r="68"></circle>
+                </svg>
+                <div class="cycle-gauge-content">
+                  <span class="cycle-gauge-day-num" id="cycle-day-num">Day 1</span>
+                  <span class="cycle-gauge-day-label" id="cycle-day-label">of 28 Day Cycle</span>
+                  <span class="cycle-gauge-subtext" id="cycle-countdown-text">Starts in -- days</span>
+                </div>
+              </div>
+
+              <div class="cycle-meta-stats">
+                <div class="cycle-stat-chip">
+                  <span class="chip-label">Next Estimated Period</span>
+                  <strong class="chip-val" id="cycle-next-date">--</strong>
+                </div>
+                <div class="cycle-stat-chip">
+                  <span class="chip-label">Current Cycle Phase</span>
+                  <strong class="chip-val text-emerald" id="cycle-phase-name">Menstrual Phase</strong>
+                </div>
+              </div>
+            </div>
+
+            <!-- Right Column: Settings & Smart HygieNet Pad Readiness Alert -->
+            <div class="cycle-details-panel">
+              <!-- Smart HygieNet Pad Readiness Banner -->
+              <div class="pad-readiness-banner" id="pad-readiness-banner">
+                <div class="banner-icon">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect>
+                    <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
+                  </svg>
+                </div>
+                <div class="banner-info">
+                  <strong id="readiness-title">HygieNet Machine Pad Readiness</strong>
+                  <p id="readiness-desc">Syncing with your dispenser quota...</p>
+                </div>
+              </div>
+
+              <!-- Phase Explanation Card -->
+              <div class="phase-info-box" id="phase-info-box">
+                <div class="phase-header">
+                  <span class="phase-dot" id="phase-color-dot"></span>
+                  <strong id="phase-detail-title">About this Phase</strong>
+                </div>
+                <p id="phase-detail-desc">Loading cycle insights...</p>
+              </div>
+
+              <!-- Cycle Parameters Form -->
+              <form class="cycle-settings-form" id="cycle-settings-form" onsubmit="handleCycleSettingsSave(event)">
+                <div class="cycle-form-row">
+                  <div class="form-group">
+                    <label for="cycle-last-date">Last Period Start Date</label>
+                    <input type="date" id="cycle-last-date" class="form-input" required>
+                  </div>
+                  <div class="form-group">
+                    <label for="cycle-length-input">Cycle Length (Days)</label>
+                    <input type="number" id="cycle-length-input" class="form-input" min="20" max="45" value="28" required>
+                  </div>
+                  <div class="form-group">
+                    <label for="period-duration-input">Period Duration (Days)</label>
+                    <input type="number" id="period-duration-input" class="form-input" min="2" max="10" value="5" required>
+                  </div>
+                </div>
+                <button type="submit" class="btn btn-secondary btn-sm" id="btn-save-cycle">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                    <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                    <polyline points="7 3 7 8 15 8"></polyline>
+                  </svg>
+                  Save & Recalculate Cycle
+                </button>
+              </form>
+            </div>
+          </div>
+
+          <!-- Cycle Timeline Bar -->
+          <div class="cycle-timeline-wrap">
+            <div class="timeline-bar-labels">
+              <span class="lbl-phase phase-menstrual">🩸 Menstrual (Days 1–5)</span>
+              <span class="lbl-phase phase-follicular">🌱 Follicular (Days 6–13)</span>
+              <span class="lbl-phase phase-ovulation">✨ Ovulation (Days 14–16)</span>
+              <span class="lbl-phase phase-luteal">🌙 Luteal (Days 17–28)</span>
+            </div>
+            <div class="cycle-timeline-bar">
+              <div class="segment seg-menstrual" style="width: 17.8%"></div>
+              <div class="segment seg-follicular" style="width: 28.6%"></div>
+              <div class="segment seg-ovulation" style="width: 10.7%"></div>
+              <div class="segment seg-luteal" style="width: 42.9%"></div>
+              <div class="timeline-indicator-needle" id="timeline-needle" style="left: 0%">
+                <div class="needle-tip">Today</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Personal Dispense History Table -->
+        <section class="content-card card-glass" style="margin-top: 24px;">
+          <div class="card-toolbar">
+            <div class="card-title-group">
+              <h3>My Dispense History</h3>
+              <p>All pad disbursements recorded for your card</p>
+            </div>
+          </div>
+
+          <div class="table-responsive">
+            <table class="data-table" id="user-history-table">
+              <thead>
+                <tr>
+                  <th>Quantity</th>
+                  <th>Status</th>
+                  <th>Balance Remaining</th>
+                  <th>Dispensed At</th>
+                </tr>
+              </thead>
+              <tbody id="user-history-tbody">
+                <tr><td colspan="4" class="text-center text-muted py-4">No dispense history found.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+      </div>
+
+      <!-- ============================================================ -->
+      <!--  VIEW 4: RESTOCK / REFILL ATTENDANT PORTAL                   -->
+      <!-- ============================================================ -->
+      <div class="refill-portal-view hidden" id="view-refill">
+        
+        <!-- Refill Hero Banner -->
+        <section class="beneficiary-hero card-glass">
+          <div class="beneficiary-hero-content">
+            <div class="beneficiary-avatar" style="background: linear-gradient(135deg, #14b8a6, #06b6d4);">R</div>
+            <div class="beneficiary-details">
+              <div class="beneficiary-tag">Restock & Maintenance Portal</div>
+              <h2 class="beneficiary-name" id="refill-portal-staff-title">Restock Attendant</h2>
+              <div class="beneficiary-meta">
+                <span>Station: <strong>MMMUT Center #01</strong></span>
+                <span>•</span>
+                <span>Role: <strong>Authorized Maintenance Staff</strong></span>
+                <span>•</span>
+                <span class="badge badge-emerald">Active Session</span>
+              </div>
+            </div>
+          </div>
+          <div class="beneficiary-hero-action">
+            <button class="btn btn-secondary btn-sm" onclick="fetchRefillStaffData()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+              Refresh Status
+            </button>
+          </div>
+        </section>
+
+        <!-- Current Machine Hopper Stock Banner -->
+        <section class="banner-card" id="refill-hopper-banner">
+          <div class="banner-content">
+            <div class="banner-badge">Current Machine Stock</div>
+            <div class="banner-title" id="refill-stock-title">Hopper: 50 / 60 Pads Remaining</div>
+            <div class="banner-desc">After physical replenishment, submit the form below with 1–2 photos of the hopper & dispenser tray for Admin verification.</div>
+          </div>
+          <div class="banner-actions">
+            <span class="badge badge-emerald" id="refill-stock-badge" style="font-size: 13px; padding: 6px 14px;">Stock OK</span>
+          </div>
+        </section>
+
+        <!-- Two Column Grid: Restock Form & Submission Logs -->
+        <div class="two-col-grid">
+          
+          <!-- Restock Submission Form -->
+          <section class="content-card card-glass">
+            <div class="card-toolbar">
+              <div class="card-title-group">
+                <h3>Submit Replenishment Report</h3>
+                <p>Upload proof photos. Admin will verify before stock is credited.</p>
+              </div>
+            </div>
+
+            <form id="refill-submit-form" onsubmit="handleRefillSubmit(event)" class="auth-form" style="gap: 16px;">
+              <div class="form-group">
+                <label for="refill-staff-name">Staff Attendant Name</label>
+                <input type="text" id="refill-staff-name" class="form-input" placeholder="e.g. Ramesh Kumar" required>
+              </div>
+
+              <div class="form-group">
+                <label for="refill-quantity-added">Pads Replenished (Count)</label>
+                <input type="number" id="refill-quantity-added" class="form-input" value="50" min="1" max="100" required>
+                <span class="field-hint">Standard sanitary pack contains 50 pads</span>
+              </div>
+
+              <div class="form-group">
+                <label for="refill-remarks">Hygiene Remarks & Machine Inspection</label>
+                <textarea id="refill-remarks" class="form-input" rows="2" placeholder="e.g. Hopper sanitized, tray cleaned, 50 pads loaded properly" required></textarea>
+              </div>
+
+              <!-- Proof Photo 1 -->
+              <div class="form-group">
+                <label>Proof Photo 1: Hopper Interior with Loaded Pads (Required)</label>
+                <div class="photo-dropzone" id="photo1-dropzone">
+                  <input type="file" id="refill-photo1-file" accept="image/*" class="hidden-file-input" onchange="handlePhotoSelect(event, 1)">
+                  <div class="dropzone-empty" id="photo1-empty" onclick="document.getElementById('refill-photo1-file').click()">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+                    <span>Click or Drag to Upload Hopper Photo</span>
+                    <span class="file-hint">Clear photo showing pads inside hopper</span>
+                  </div>
+                  <div class="dropzone-preview hidden" id="photo1-preview-wrap">
+                    <img id="photo1-preview-img" alt="Hopper Proof" src="">
+                    <button type="button" class="btn-remove-photo" onclick="removePhoto(1)" title="Remove Photo">✕</button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Proof Photo 2 -->
+              <div class="form-group">
+                <label>Proof Photo 2: Dispenser Chute & Tray (Optional)</label>
+                <div class="photo-dropzone" id="photo2-dropzone">
+                  <input type="file" id="refill-photo2-file" accept="image/*" class="hidden-file-input" onchange="handlePhotoSelect(event, 2)">
+                  <div class="dropzone-empty" id="photo2-empty" onclick="document.getElementById('refill-photo2-file').click()">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+                    <span>Click or Drag to Upload Chute / Tray Photo</span>
+                    <span class="file-hint">Exterior dispenser front inspection</span>
+                  </div>
+                  <div class="dropzone-preview hidden" id="photo2-preview-wrap">
+                    <img id="photo2-preview-img" alt="Tray Proof" src="">
+                    <button type="button" class="btn-remove-photo" onclick="removePhoto(2)" title="Remove Photo">✕</button>
+                  </div>
+                </div>
+              </div>
+
+              <button type="submit" class="btn btn-primary btn-block btn-lg" id="btn-submit-refill">
+                Submit Restock for Admin Approval
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+              </button>
+            </form>
+          </section>
+
+          <!-- History of Submissions -->
+          <section class="content-card card-glass">
+            <div class="card-toolbar">
+              <div class="card-title-group">
+                <h3>My Restock Submissions</h3>
+                <p>Track admin verification status of your replenishment reports</p>
+              </div>
+            </div>
+
+            <div class="refill-logs-list" id="refill-staff-logs-list">
+              <div class="text-center text-muted py-4">No replenishment reports submitted yet.</div>
+            </div>
+          </section>
+        </div>
+
+      </div>
+
+    </main>
+  </div>
+
+  <!-- ============================================================ -->
+  <!--  MODALS & DIALOGS                                            -->
+  <!-- ============================================================ -->
+
+  <!-- 1. Student Registration Modal (Aadhaar & OTP) -->
+  <div class="modal-backdrop hidden" id="register-modal">
+    <div class="modal-box" style="max-width: 480px;">
+      <div class="modal-header">
+        <div class="modal-title-with-badge">
+          <h3 id="reg-modal-title">Student Card Registration</h3>
+          <span class="badge badge-emerald">Aadhaar Verified</span>
+        </div>
+        <button class="btn-icon" onclick="closeRegisterModal()" title="Close">✕</button>
+      </div>
+
+      <!-- Step 1: Details & Aadhaar Checksum -->
+      <form id="reg-step1-form" onsubmit="handleSendRegistrationOTP(event)">
+        <p class="modal-subtitle">Step 1: Enter your details. Your 12-digit Aadhaar number is mathematically validated using the UIDAI Verhoeff algorithm.</p>
+
+        <div class="form-group">
+          <label for="reg-name">Full Student Name</label>
+          <input type="text" id="reg-name" class="form-input" placeholder="e.g. Pooja Singh" required>
+        </div>
+
+        <div class="form-group">
+          <label for="reg-aadhaar">12-Digit Aadhaar Number</label>
+          <div class="input-with-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="3"></rect><circle cx="9" cy="10" r="2"></circle><line x1="15" y1="8" x2="17" y2="8"></line><line x1="15" y1="12" x2="17" y2="12"></line><line x1="7" y1="16" x2="17" y2="16"></line></svg>
+            <input type="text" id="reg-aadhaar" class="form-input font-mono" placeholder="XXXX XXXX XXXX" maxlength="14" required autocomplete="off" oninput="formatAndValidateAadhaar(this)">
+          </div>
+          <div class="aadhaar-feedback" id="aadhaar-feedback">
+            <span class="indicator-icon">ℹ️</span>
+            <span class="indicator-text">Enter 12 digits to verify checksum</span>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="reg-email">Student Email Address</label>
+          <input type="email" id="reg-email" class="form-input" placeholder="e.g. pooja@mmmut.ac.in" required>
+          <span class="field-hint">A 6-digit OTP will be sent here (also shown on screen in dev mode)</span>
+        </div>
+
+        <div class="form-group">
+          <label for="reg-dept">Hostel / Department / Year</label>
+          <input type="text" id="reg-dept" class="form-input" placeholder="e.g. Sarojini Bhawan, B.Tech CSE 2nd Yr" required>
+        </div>
+
+        <div class="modal-footer" style="margin-top: 20px;">
+          <button type="button" class="btn btn-secondary" onclick="closeRegisterModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="btn-reg-step1">
+            Generate Verification OTP &rarr;
+          </button>
+        </div>
+      </form>
+
+      <!-- Step 2: 6-Digit OTP Verification -->
+      <form id="reg-step2-form" class="hidden" onsubmit="handleVerifyRegistrationOTP(event)">
+        <div class="otp-instruction-banner">
+          <div class="otp-banner-icon">📩</div>
+          <div>
+            <strong>OTP Dispatched!</strong>
+            <p id="otp-destination-text">A 6-digit verification code has been generated.</p>
+          </div>
+        </div>
+
+        <div class="form-group" style="text-align: center; margin: 24px 0;">
+          <label for="reg-otp-input" style="font-size: 13px; font-weight: 600;">Enter 6-Digit Verification Code</label>
+          <input type="text" id="reg-otp-input" class="form-input font-mono text-center" placeholder="123456" maxlength="6" style="font-size: 24px; letter-spacing: 6px; width: 220px; margin: 8px auto;" required autocomplete="off">
+          <span class="field-hint">Valid for 10 minutes</span>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="backToRegStep1()">Back</button>
+          <button type="submit" class="btn btn-primary" id="btn-reg-verify">
+            Verify & Queue for Card Allotment
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 2. Admin Allot Card Modal (assign RFID UID to student) -->
+  <div class="modal-backdrop hidden" id="allot-modal">
+    <div class="modal-box" style="max-width: 460px;">
+      <div class="modal-header">
+        <div class="modal-title-with-badge">
+          <h3>Allot RFID Card</h3>
+          <span class="badge badge-emerald">Step 2: Physical Allotment</span>
+        </div>
+        <button class="btn-icon" onclick="closeAllotModal()" title="Close">✕</button>
+      </div>
+      <form id="allot-form" onsubmit="handleAllotSubmit(event)">
+        <input type="hidden" id="allot-req-id" value="">
+        
+        <div class="allot-summary-box" id="allot-summary-box">
+          <!-- Populated by JS -->
+        </div>
+
+        <div class="form-group">
+          <label for="allot-uid">Scan / Enter RFID Card UID</label>
+          <div class="input-with-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"></rect><line x1="2" y1="10" x2="22" y2="10"></line></svg>
+            <input type="text" id="allot-uid" class="form-input font-mono" placeholder="e.g. C3:27:87:14" required autocomplete="off">
+          </div>
+          <span class="field-hint">Tap card on reader or enter the 8-10 char hex UID</span>
+        </div>
+
+        <div class="form-group">
+          <label for="allot-limit">Monthly Quota Limit (Pads)</label>
+          <input type="number" id="allot-limit" class="form-input" value="5" min="1" max="20" required>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeAllotModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="btn-allot-save">
+            Assign Card & Activate Student
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 3. Emergency Pad Request Modal -->
+  <div class="modal-backdrop hidden" id="emergency-modal">
+    <div class="modal-box" style="max-width: 440px;">
+      <div class="modal-header">
+        <div class="modal-title-with-badge">
+          <h3>Request Emergency Sanitary Pad</h3>
+          <span class="badge badge-warn">Urgent Grant</span>
+        </div>
+        <button class="btn-icon" onclick="closeEmergencyModal()" title="Close">✕</button>
+      </div>
+      <form id="emergency-form" onsubmit="handleEmergencySubmit(event)">
+        <p class="modal-subtitle">If you have exhausted your 5-pad monthly quota and are experiencing an unexpected flow, submit this request. Administrators will grant emergency quota immediately.</p>
+        
+        <div class="form-group">
+          <label for="emergency-reason">Brief Note / Location (Optional)</label>
+          <textarea id="emergency-reason" class="form-input" rows="3" placeholder="e.g. Sudden flow during lab class, quota exhausted."></textarea>
+        </div>
+
+        <div class="modal-footer" style="margin-top: 18px;">
+          <button type="button" class="btn btn-secondary" onclick="closeEmergencyModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="btn-emergency-submit">
+            Submit Emergency Request
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 4. Add / Edit Beneficiary Modal (Admin direct) -->
+  <div class="modal-backdrop hidden" id="user-modal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3 id="modal-title">Register Beneficiary Card</h3>
+        <button class="btn-icon" onclick="closeUserModal()" title="Close">✕</button>
+      </div>
+      <form id="user-form" onsubmit="handleUserSubmit(event)">
+        <input type="hidden" id="form-is-edit" value="0">
+        <div class="form-group">
+          <label for="form-name">Beneficiary Name</label>
+          <input type="text" id="form-name" class="form-input" placeholder="e.g. Priya Sharma" required>
+        </div>
+        <div class="form-group">
+          <label for="form-aadhaar">Aadhaar Number (12 Digits)</label>
+          <input type="text" id="form-aadhaar" class="form-input font-mono" placeholder="XXXX XXXX XXXX" maxlength="14" oninput="formatAndValidateAadhaar(this, 'form-aadhaar-feedback')">
+          <div class="aadhaar-feedback" id="form-aadhaar-feedback">
+            <span class="indicator-icon">ℹ️</span>
+            <span class="indicator-text">Verhoeff checksum checked on entry</span>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="form-uid">RFID Card UID</label>
+          <input type="text" id="form-uid" class="form-input font-mono" placeholder="e.g. C3:27:87:14" required>
+          <span class="field-hint" id="form-uid-hint">Format: 8-10 hex characters (colons optional)</span>
+        </div>
+        <div class="form-group">
+          <label for="form-limit">Monthly Limit (Pads)</label>
+          <input type="number" id="form-limit" class="form-input" value="5" min="1" max="20" required>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeUserModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="btn-modal-save">Save Beneficiary</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 5. Image Lightbox Modal (For Restock Proof Photos) -->
+  <div class="lightbox-backdrop hidden" id="image-lightbox-modal" onclick="closeImageLightbox(event)">
+    <div class="lightbox-content" onclick="event.stopPropagation()">
+      <button class="lightbox-close-btn" onclick="closeImageLightbox(event)" title="Close Lightbox">✕</button>
+      <img id="lightbox-img" alt="Refill Proof High-Res" src="">
+      <div class="lightbox-caption" id="lightbox-caption">Hopper Proof Photo</div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!--  LOCALHOST HARDWARE SIMULATOR BAR (ZERO ARDUINO NEEDED)     -->
+  <!-- ============================================================ -->
+  <div class="dev-simulator-bar" id="localhost-dev-bar" style="display: none;">
+    <div class="dev-bar-header" onclick="toggleDevBar()">
+      <div class="dev-bar-title">
+        <span class="dev-pulse-dot"></span>
+        <strong>⚡ Localhost Hardware Simulator</strong>
+        <span class="dev-tag">Zero Arduino Connected</span>
+      </div>
+      <button type="button" class="btn-dev-toggle" id="btn-dev-toggle">▲ Expand Simulator</button>
+    </div>
+    <div class="dev-bar-body hidden" id="dev-bar-body">
+      <div class="dev-controls-grid">
+        <div class="dev-control-col">
+          <label>Simulate RFID Card Tap:</label>
+          <select id="sim-card-select" class="form-input form-input-sm font-mono">
+            <option value="C3:27:87:14">Sunita Yadav (C3:27:87:14)</option>
+            <option value="E3:A5:AE:02">Anita Kumari (E3:A5:AE:02)</option>
+          </select>
+        </div>
+        <div class="dev-control-col dev-btn-group">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="simVerifySelectedCard()">
+            🔍 Card Quota Check
+          </button>
+          <button type="button" class="btn btn-primary btn-sm" onclick="simDispenseSelectedCard(1)">
+            🩸 Dispense 1 Pad
+          </button>
+          <button type="button" class="btn btn-primary btn-sm" onclick="simDispenseSelectedCard(2)">
+            🩸 Dispense 2 Pads
+          </button>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="simTriggerHopperStockDrop()">
+            📉 Decrement Hopper (-1)
+          </button>
+        </div>
+      </div>
+      <div class="dev-bar-status-line" id="dev-sim-status">
+        Ready for offline hardware tests on localhost:5000
+      </div>
+    </div>
+  </div>
+
+  <!-- Floating AI Chatbot Launcher -->
+  <button class="chat-fab-launcher" id="chat-fab-launcher" onclick="toggleChatWindow()" title="Open HygieBot AI Health Assistant">
+    <div class="fab-icon-wrap">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+      </svg>
+      <span class="fab-pulse-dot"></span>
+    </div>
+    <span class="fab-label">HygieBot AI</span>
+  </button>
+
+  <!-- AI Chatbot Window Drawer -->
+  <div class="chat-window-box card-glass hidden" id="chat-window">
+    <!-- Chat Header -->
+    <div class="chat-header">
+      <div class="chat-header-info">
+        <div class="chat-avatar-bot">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+          </svg>
+        </div>
+        <div>
+          <div class="chat-bot-title">HygieBot <span>AI</span></div>
+          <div class="chat-bot-sub">Menstrual Health & Dispenser Saheli</div>
+        </div>
+      </div>
+      <div class="chat-header-actions">
+        <button type="button" class="chat-lang-btn" id="chat-lang-btn" onclick="toggleChatLanguage()" title="Toggle Language (English / Hindi)">
+          <span id="chat-lang-flag">🇮🇳</span> <span id="chat-lang-label">हिन्दी</span>
+        </button>
+        <button type="button" class="chat-close-btn" onclick="toggleChatWindow()" title="Close Chat">✕</button>
+      </div>
+    </div>
+
+    <!-- Chat Quick Suggestion Chips -->
+    <div class="chat-chips-scroll" id="chat-quick-chips">
+      <button type="button" class="chat-chip" onclick="handleChipClick(this)">🩸 Pad change guide</button>
+      <button type="button" class="chat-chip" onclick="handleChipClick(this)">🌿 Period cramp relief</button>
+      <button type="button" class="chat-chip" onclick="handleChipClick(this)">🗑️ Safe pad disposal</button>
+      <button type="button" class="chat-chip" onclick="handleChipClick(this)">⚙️ How to use machine</button>
+      <button type="button" class="chat-chip" onclick="handleChipClick(this)">📅 Menstrual cycle phases</button>
+    </div>
+
+    <!-- Chat Messages Stream -->
+    <div class="chat-messages-container" id="chat-messages">
+      <div class="chat-msg msg-bot">
+        <div class="msg-bubble">
+          👋 Hello! I am <strong>HygieBot AI</strong>, your menstrual health advisor and HygieNet vending assistant.<br><br>
+          Ask me any questions about cramps, menstrual hygiene, pad changes, or how to use the HygieNet vending machine!
+        </div>
+        <span class="msg-time">Just now</span>
+      </div>
+    </div>
+
+    <!-- Typing Indicator (Hidden by default) -->
+    <div class="chat-typing-indicator hidden" id="chat-typing">
+      <span class="typing-dot"></span>
+      <span class="typing-dot"></span>
+      <span class="typing-dot"></span>
+      <span class="typing-label">HygieBot is thinking...</span>
+    </div>
+
+    <!-- Chat Input Form -->
+    <form class="chat-input-row" id="chat-form" onsubmit="handleSendChatMessage(event)">
+      <input type="text" id="chat-user-input" class="chat-text-input" placeholder="Type a message or question..." autocomplete="off" required>
+      <button type="submit" class="btn btn-primary chat-send-btn" id="btn-chat-send" title="Send Message">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="22" y1="2" x2="11" y2="13"></line>
+          <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+        </svg>
+      </button>
+    </form>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <script src="app.js?v=3.4"></script>
+
+<div id="runtime-check-marker" style="display:none">RUNTIME_CHECK_DONE</div>
+</body>
+</html>

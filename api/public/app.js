@@ -844,19 +844,20 @@ function openAddUserModal() {
 }
 
 function openEditUserModal(uid, name, limit, aadhaar) {
-  if (cachedUsers && (!name || !limit)) {
-    const found = cachedUsers.find(x => x.rfid_uid === uid);
+  const cleanUid = (uid || '').trim().toUpperCase();
+  if (cachedUsers && Array.isArray(cachedUsers)) {
+    const found = cachedUsers.find(x => (x.rfid_uid || '').trim().toUpperCase() === cleanUid);
     if (found) {
-      name = found.name;
-      limit = found.monthly_limit || 5;
-      aadhaar = found.aadhaar_no || '';
+      if (!name) name = found.name;
+      if (!limit) limit = found.monthly_limit || 5;
+      if (!aadhaar) aadhaar = found.aadhaar_no || '';
     }
   }
   document.getElementById('modal-title').textContent = 'Edit Beneficiary Details & Quota';
   document.getElementById('form-is-edit').value = '1';
   document.getElementById('form-name').value = name || '';
   const uidInput = document.getElementById('form-uid');
-  uidInput.value = uid || '';
+  uidInput.value = cleanUid || uid || '';
   uidInput.setAttribute('readonly', 'true');
   document.getElementById('form-limit').value = limit || 5;
   document.getElementById('btn-modal-save').textContent = 'Update Beneficiary';
@@ -943,8 +944,8 @@ async function handleUserSubmit(e) {
 
 async function deleteUser(uid, name) {
   const cleanUid = (uid || '').trim().toUpperCase();
-  if (!name && cachedUsers) {
-    const found = cachedUsers.find(x => x.rfid_uid === cleanUid);
+  if (!name && cachedUsers && Array.isArray(cachedUsers)) {
+    const found = cachedUsers.find(x => (x.rfid_uid || '').trim().toUpperCase() === cleanUid);
     if (found) name = found.name;
   }
   if (!confirm(`Are you sure you want to delete beneficiary "${name || cleanUid}" (UID: ${cleanUid})?\nThis will remove their card registration from the system.`)) {
@@ -1745,10 +1746,8 @@ function openImageLightbox(src, caption) {
 }
 
 function closeImageLightbox(event) {
-  const modal = document.getElementById('imag
-  } catch (err) {
-    showToast('Failed to reset quotas', 'error');
-  }
+  const modal = document.getElementById('image-lightbox-modal');
+  if (modal) modal.classList.add('hidden');
 }
 
 // ------------------------------------------------------------

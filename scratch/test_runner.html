@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>JS Syntax Test</title>
+  <script>
+    window.errors = [];
+    window.onerror = function(msg, url, line, col, error) {
+      window.errors.push({msg: msg, line: line, col: col, stack: error ? error.stack : ''});
+      document.body.innerText = 'ERROR: ' + msg + ' at line ' + line + ':' + col;
+    };
+  </script>
+</head>
+<body>
+  <div id="status">Loading...</div>
+  <!-- Mock DOM elements that app.js might query on startup -->
+  <div id="connection-pill"></div>
+  <div id="hopper-pill"></div>
+  <div id="hopper-stock-card"></div>
+  <div id="hopper-percent"></div>
+  <div id="hopper-bar"></div>
+  <div id="live-indicator"></div>
+  <div id="theme-toggle-btn"></div>
+  <div id="toast-container"></div>
+  <div id="image-lightbox-modal" class="hidden"></div>
+  <img id="lightbox-img" />
+  <div id="lightbox-caption"></div>
+  
+  <script src="../public/app.js"></script>
+  <script>
+    if (window.errors.length === 0) {
+      document.body.innerText = 'SUCCESS: NO SYNTAX OR STARTUP ERRORS';
+    }
+  </script>
+</body>
+</html>
