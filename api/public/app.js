@@ -85,10 +85,58 @@ function formatAndValidateAadhaar(inputEl, feedbackElId = 'aadhaar-feedback') {
 }
 
 // ------------------------------------------------------------
+//  THEME SWITCHER (DARK MODE & LIGHT MODE)
+// ------------------------------------------------------------
+
+const THEME_STORAGE_KEY = 'hygienet_theme';
+
+function initTheme() {
+  const savedTheme = localStorage.getItem(THEME_STORAGE_KEY) || 'dark';
+  applyTheme(savedTheme);
+}
+
+function applyTheme(theme) {
+  const isLight = theme === 'light';
+  if (isLight) {
+    document.documentElement.setAttribute('data-theme', 'light');
+    document.body.classList.add('theme-light');
+  } else {
+    document.documentElement.removeAttribute('data-theme');
+    document.body.classList.remove('theme-light');
+  }
+
+  const iconEl = document.getElementById('theme-icon');
+  const labelEl = document.getElementById('theme-label');
+  if (iconEl && labelEl) {
+    if (isLight) {
+      iconEl.textContent = '🌙';
+      labelEl.textContent = 'Dark';
+    } else {
+      iconEl.textContent = '☀️';
+      labelEl.textContent = 'Light';
+    }
+  }
+
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, isLight ? 'light' : 'dark');
+  } catch (e) {
+    console.warn('Could not save theme preference:', e);
+  }
+}
+
+function toggleTheme() {
+  const currentTheme = (document.documentElement.getAttribute('data-theme') === 'light' || document.body.classList.contains('theme-light')) ? 'light' : 'dark';
+  const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+  applyTheme(newTheme);
+  showToast(`Switched to ${newTheme === 'light' ? 'Light Mode' : 'Dark Mode'}.`, 'info');
+}
+
+// ------------------------------------------------------------
 //  INITIALIZATION & VIEW ROUTING
 // ------------------------------------------------------------
 
 document.addEventListener('DOMContentLoaded', () => {
+  initTheme();
   initApp();
   initLocalDevBar();
   registerServiceWorker();
@@ -827,7 +875,8 @@ async function fetchAdminRegistrationRequests() {
 
     const res = await fetch('/api/admin/registration-requests', { cache: 'no-store' }).then(r => r.json());
     const requests = res.requests || [];
-    const pending = requests.filter(r => r.status === 'OTP_VERIFIED');
+    // Show any request that is pending allotment / verified / not yet allotted
+    const pending = requests.filter(r => r.status !== 'ALLOTTED' && r.status !== 'REJECTED');
 
     if (badgeEl) badgeEl.textContent = pending.length;
 
@@ -837,20 +886,26 @@ async function fetchAdminRegistrationRequests() {
     }
 
     listEl.innerHTML = pending.map(req => {
+      const id = req.id || req._id || '';
       const maskedAadhaar = req.aadhaar_no ? `XXXX XXXX ${req.aadhaar_no.replace(/\D/g, '').slice(-4)}` : 'Verified';
+      const isOtpDone = req.status === 'PENDING_ALLOTMENT' || req.status === 'OTP_VERIFIED';
+      const badgeHtml = isOtpDone
+        ? '<span class="badge badge-emerald">Aadhaar Verified</span>'
+        : '<span class="badge badge-warn">Pending OTP</span>';
+
       return `
         <div class="queue-item">
           <div class="queue-item-header">
             <strong>${escapeHtml(req.name)}</strong>
-            <span class="badge badge-emerald">Aadhaar Verified</span>
+            ${badgeHtml}
           </div>
           <div class="queue-item-meta">
             <span>Aadhaar: <code class="font-mono">${maskedAadhaar}</code></span>
             <span>Email: ${escapeHtml(req.email || '')}</span>
-            <span>Dept: ${escapeHtml(req.department || '')}</span>
+            <span>Created: ${escapeHtml(req.created_at || 'Recently')}</span>
           </div>
           <div class="queue-actions-row">
-            <button class="btn btn-primary btn-sm" onclick="openAllotModal('${req.id}', '${escapeHtml(req.name)}', '${maskedAadhaar}', '${escapeHtml(req.email || '')}', '${escapeHtml(req.department || '')}')">
+            <button class="btn btn-primary btn-sm" onclick="openAllotModal('${escapeHtml(id)}', '${escapeHtml(req.name)}', '${maskedAadhaar}', '${escapeHtml(req.email || '')}', '${escapeHtml(req.department || '')}')">
               💳 Allot RFID Card
             </button>
           </div>
@@ -868,7 +923,7 @@ function openAllotModal(reqId, name, aadhaar, email, dept) {
   summary.innerHTML = `
     <strong>Student: ${escapeHtml(name)}</strong>
     <span>Aadhaar: <code class="font-mono">${escapeHtml(aadhaar)}</code></span>
-    <span>Email: ${escapeHtml(email)} • ${escapeHtml(dept)}</span>
+    <span>Email: ${escapeHtml(email)} ${dept ? `• ${escapeHtml(dept)}` : ''}</span>
   `;
   document.getElementById('allot-uid').value = '';
   document.getElementById('allot-limit').value = 5;
@@ -886,8 +941,14 @@ async function handleAllotSubmit(e) {
   const limit = parseInt(document.getElementById('allot-limit').value, 10) || 5;
 
   if (!uid) {
-    showToast('Please enter or tap an RFID UID.', 'error');
+    showToast('Please enter or scan an RFID UID.', 'error');
     return;
+  }
+
+  const saveBtn = document.getElementById('btn-allot-save');
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Allotting...';
   }
 
   try {
@@ -900,13 +961,18 @@ async function handleAllotSubmit(e) {
     if (data.success) {
       showToast(data.message, 'success');
       closeAllotModal();
-      fetchAdminRegistrationRequests();
-      fetchAdminDashboardData();
+      await fetchAdminDashboardData();
     } else {
       showToast(data.message || 'Failed to allot card', 'error');
     }
   } catch (err) {
+    console.error('Allotment error:', err);
     showToast('Network error allotting card', 'error');
+  } finally {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Confirm & Allot Card';
+    }
   }
 }
 

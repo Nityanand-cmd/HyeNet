@@ -983,22 +983,32 @@ def verify_registration_otp(request_id: str, entered_otp: str):
     from bson.objectid import ObjectId
     if db is not None:
         try:
-            req = db.registration_requests.find_one({"_id": ObjectId(request_id)})
+            req = None
+            if ObjectId.is_valid(request_id):
+                req = db.registration_requests.find_one({"_id": ObjectId(request_id)})
             if not req:
-                return {"success": False, "message": "Registration request not found"}
-            if str(req.get("otp", "")).strip() != str(entered_otp or "").strip():
-                return {"success": False, "message": "Incorrect OTP. Please try again."}
-            
-            db.registration_requests.update_one(
-                {"_id": ObjectId(request_id)},
-                {"$set": {"status": "PENDING_ALLOTMENT", "verified_at": datetime.now(timezone.utc)}}
-            )
-            return {"success": True, "message": "Aadhaar verified! Request submitted for admin card allotment."}
+                req = db.registration_requests.find_one({"_id": str(request_id)})
+
+            if req:
+                if str(req.get("otp", "")).strip() != str(entered_otp or "").strip():
+                    return {"success": False, "message": "Incorrect OTP. Please try again."}
+                
+                if ObjectId.is_valid(request_id):
+                    db.registration_requests.update_one(
+                        {"_id": ObjectId(request_id)},
+                        {"$set": {"status": "PENDING_ALLOTMENT", "verified_at": datetime.now(timezone.utc)}}
+                    )
+                else:
+                    db.registration_requests.update_one(
+                        {"_id": str(request_id)},
+                        {"$set": {"status": "PENDING_ALLOTMENT", "verified_at": datetime.now(timezone.utc)}}
+                    )
+                return {"success": True, "message": "Aadhaar verified! Request submitted for admin card allotment."}
         except Exception as e:
             print(f"[MongoDB Error] verify_registration_otp: {e}")
 
     for r in _fallback_registrations:
-        if r.get("_id") == request_id:
+        if str(r.get("_id")) == str(request_id) or str(r.get("id")) == str(request_id):
             if str(r.get("otp", "")).strip() == str(entered_otp or "").strip():
                 r["status"] = "PENDING_ALLOTMENT"
                 return {"success": True, "message": "Aadhaar verified! Request submitted for card allotment."}
@@ -1009,7 +1019,7 @@ def get_pending_registrations():
     db = get_db()
     if db is not None:
         try:
-            cursor = db.registration_requests.find({"status": {"$in": ["PENDING_ALLOTMENT", "OTP_VERIFIED"]}}).sort("created_at", pymongo.DESCENDING)
+            cursor = db.registration_requests.find({"status": {"$nin": ["ALLOTTED", "REJECTED"]}}).sort("created_at", pymongo.DESCENDING)
             results = []
             for doc in cursor:
                 doc["_id"] = str(doc.get("_id", ""))
@@ -1022,8 +1032,8 @@ def get_pending_registrations():
             print(f"[MongoDB Error] get_pending_registrations: {e}")
     res = []
     for r in _fallback_registrations:
-        if r.get("status") in ["PENDING_ALLOTMENT", "OTP_VERIFIED"]:
-            r["id"] = r.get("_id")
+        if r.get("status") not in ["ALLOTTED", "REJECTED"]:
+            r["id"] = str(r.get("_id"))
             res.append(r)
     return res
 
@@ -1033,36 +1043,60 @@ def allot_rfid_card_to_student(request_id: str, rfid_uid: str, monthly_limit: in
     from bson.objectid import ObjectId
     if db is not None:
         try:
-            req = db.registration_requests.find_one({"_id": ObjectId(request_id)})
+            req = None
+            if ObjectId.is_valid(request_id):
+                req = db.registration_requests.find_one({"_id": ObjectId(request_id)})
+            if not req:
+                req = db.registration_requests.find_one({"_id": str(request_id)})
+            
+            if not req:
+                for r in _fallback_registrations:
+                    if str(r.get("_id")) == str(request_id) or str(r.get("id")) == str(request_id):
+                        req = r
+                        break
+
             if not req:
                 return {"success": False, "message": "Registration request not found."}
             
-            existing = db.users.find_one({"rfid_uid": rfid_uid})
-            if existing:
-                return {"success": False, "message": f"RFID Card UID {rfid_uid} is already allotted to {existing.get('name')}."}
-            
-            db.users.insert_one({
-                "rfid_uid": rfid_uid,
-                "name": req.get("name"),
-                "aadhaar_no": req.get("aadhaar_no"),
-                "email": req.get("email"),
-                "monthly_limit": monthly_limit,
-                "used_pads": 0,
-                "active": True,
-                "created_at": datetime.now(timezone.utc)
-            })
-
-            db.registration_requests.update_one(
-                {"_id": ObjectId(request_id)},
-                {"$set": {"status": "ALLOTTED", "allotted_uid": rfid_uid, "allotted_at": datetime.now(timezone.utc)}}
+            # Upsert into users so the student record is cleanly created or updated
+            db.users.update_one(
+                {"rfid_uid": rfid_uid},
+                {
+                    "$set": {
+                        "rfid_uid": rfid_uid,
+                        "name": req.get("name"),
+                        "aadhaar_no": req.get("aadhaar_no"),
+                        "email": req.get("email"),
+                        "monthly_limit": monthly_limit,
+                        "used_pads": 0,
+                        "active": True,
+                        "allotted_at": datetime.now(timezone.utc)
+                    },
+                    "$setOnInsert": {
+                        "created_at": datetime.now(timezone.utc)
+                    }
+                },
+                upsert=True
             )
+
+            # Mark registration request as ALLOTTED
+            if ObjectId.is_valid(request_id):
+                db.registration_requests.update_one(
+                    {"_id": ObjectId(request_id)},
+                    {"$set": {"status": "ALLOTTED", "allotted_uid": rfid_uid, "allotted_at": datetime.now(timezone.utc)}}
+                )
+            else:
+                db.registration_requests.update_one(
+                    {"_id": str(request_id)},
+                    {"$set": {"status": "ALLOTTED", "allotted_uid": rfid_uid, "allotted_at": datetime.now(timezone.utc)}}
+                )
 
             return {"success": True, "message": f"RFID Card {rfid_uid} allotted to {req.get('name')} successfully!"}
         except Exception as e:
             print(f"[MongoDB Error] allot_rfid_card_to_student: {e}")
 
     for r in _fallback_registrations:
-        if r.get("_id") == request_id:
+        if str(r.get("_id")) == str(request_id) or str(r.get("id")) == str(request_id):
             _fallback_users[rfid_uid] = {
                 "name": r.get("name"),
                 "aadhaar_no": r.get("aadhaar_no"),
