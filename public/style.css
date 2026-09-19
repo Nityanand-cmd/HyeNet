@@ -2945,3 +2945,30 @@ body.theme-light .chat-text-input {
   border-color: rgba(15, 23, 42, 0.15);
 }
 
+/* Table Action Buttons in Light Mode */
+[data-theme="light"] .btn-table-action,
+body.theme-light .btn-table-action {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  color: #334155;
+}
+
+[data-theme="light"] .btn-table-action:hover,
+body.theme-light .btn-table-action:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+[data-theme="light"] .btn-table-action.btn-del,
+body.theme-light .btn-table-action.btn-del {
+  background: #fee2e2;
+  border-color: #fca5a5;
+  color: #dc2626;
+}
+
+[data-theme="light"] .btn-table-action.btn-del:hover,
+body.theme-light .btn-table-action.btn-del:hover {
+  background: #fecaca;
+  color: #b91c1c;
+}
+

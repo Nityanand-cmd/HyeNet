@@ -898,33 +898,46 @@ def resolve_emergency_request(request_id: str, action: str = "approve", extra_pa
     from bson.objectid import ObjectId
     if db is not None:
         try:
-            req = db.emergency_requests.find_one({"_id": ObjectId(request_id)})
+            req = None
+            if ObjectId.is_valid(request_id):
+                req = db.emergency_requests.find_one({"_id": ObjectId(request_id)})
+            if not req:
+                req = db.emergency_requests.find_one({"_id": str(request_id)})
+
+            if not req:
+                for r in _fallback_emergency_requests:
+                    if str(r.get("_id")) == str(request_id) or str(r.get("id")) == str(request_id):
+                        req = r
+                        break
+
             if not req:
                 return {"success": False, "message": "Request not found"}
             if req.get("status") != "PENDING":
                 return {"success": False, "message": f"Request already {req.get('status')}"}
             
             uid = req.get("rfid_uid")
-            if action == "approve":
+            q_filter = {"_id": ObjectId(request_id)} if ObjectId.is_valid(request_id) else {"_id": str(request_id)}
+            
+            if action in ["approve", "grant"]:
                 db.users.update_one({"rfid_uid": uid}, {"$inc": {"monthly_limit": extra_pads}})
                 db.emergency_requests.update_one(
-                    {"_id": ObjectId(request_id)},
+                    q_filter,
                     {"$set": {"status": "APPROVED", "pads_granted": extra_pads, "resolved_at": datetime.now(timezone.utc)}}
                 )
                 log_transaction(uid, req.get("user_name"), "ADMIN-OVERRIDE", extra_pads, "EMERGENCY_GRANTED", 0)
                 return {"success": True, "message": f"Approved +{extra_pads} emergency pad(s) for {req.get('user_name')}."}
             else:
                 db.emergency_requests.update_one(
-                    {"_id": ObjectId(request_id)},
+                    q_filter,
                     {"$set": {"status": "REJECTED", "resolved_at": datetime.now(timezone.utc)}}
                 )
-                return {"success": True, "message": "Emergency request declined."}
+                return {"success": True, "message": "Emergency request declined/dismissed."}
         except Exception as e:
             print(f"[MongoDB Error] resolve_emergency_request: {e}")
 
     for r in _fallback_emergency_requests:
-        if r.get("_id") == request_id:
-            if action == "approve":
+        if str(r.get("_id")) == str(request_id) or str(r.get("id")) == str(request_id):
+            if action in ["approve", "grant"]:
                 r["status"] = "APPROVED"
                 r["pads_granted"] = extra_pads
                 if r.get("rfid_uid") in _fallback_users:
@@ -932,7 +945,7 @@ def resolve_emergency_request(request_id: str, action: str = "approve", extra_pa
                 return {"success": True, "message": f"Approved +{extra_pads} emergency pad(s)."}
             else:
                 r["status"] = "REJECTED"
-                return {"success": True, "message": "Request declined."}
+                return {"success": True, "message": "Emergency request declined/dismissed."}
     return {"success": False, "message": "Request not found"}
 
 # ============================================================
@@ -961,6 +974,15 @@ def create_registration_request(name: str, aadhaar_no: str, email: str):
         "created_at": datetime.now(timezone.utc)
     }
 
+    # Dispatch real email via SMTP if configured
+    email_res = {"sent": False, "message": "Local simulation"}
+    try:
+        from backend.mailer import send_otp_email
+        email_res = send_otp_email(email, name, otp)
+    except Exception as em_err:
+        print(f"[Mailer Exception] {em_err}")
+        email_res = {"sent": False, "message": str(em_err)}
+
     if db is not None:
         try:
             existing_user = db.users.find_one({"aadhaar_no": format_aadhaar(clean_aadhaar)})
@@ -969,14 +991,50 @@ def create_registration_request(name: str, aadhaar_no: str, email: str):
             
             res = db.registration_requests.insert_one(req_doc)
             req_id = str(res.inserted_id)
-            return {"success": True, "request_id": req_id, "otp": otp, "message": f"OTP sent to {email}"}
+            msg = f"OTP sent to {email}" if email_res.get("sent") else f"OTP generated for {email} (Check inbox or dev bar)"
+            return {"success": True, "request_id": req_id, "otp": otp, "email_sent": email_res.get("sent", False), "message": msg}
         except Exception as e:
             print(f"[MongoDB Error] create_registration_request: {e}")
 
     req_id = str(len(_fallback_registrations) + 1)
     req_doc["_id"] = req_id
     _fallback_registrations.insert(0, req_doc)
-    return {"success": True, "request_id": req_id, "otp": otp, "message": f"OTP sent to {email}"}
+    msg = f"OTP sent to {email}" if email_res.get("sent") else f"OTP generated for {email}"
+    return {"success": True, "request_id": req_id, "otp": otp, "email_sent": email_res.get("sent", False), "message": msg}
+
+def reject_registration_request(request_id: str, reason: str = "Rejected by administrator"):
+    db = get_db()
+    from bson.objectid import ObjectId
+    if db is not None:
+        try:
+            req = None
+            if ObjectId.is_valid(request_id):
+                req = db.registration_requests.find_one({"_id": ObjectId(request_id)})
+            if not req:
+                req = db.registration_requests.find_one({"_id": str(request_id)})
+
+            if req:
+                if ObjectId.is_valid(request_id):
+                    db.registration_requests.update_one(
+                        {"_id": ObjectId(request_id)},
+                        {"$set": {"status": "REJECTED", "rejection_reason": reason, "rejected_at": datetime.now(timezone.utc)}}
+                    )
+                else:
+                    db.registration_requests.update_one(
+                        {"_id": str(request_id)},
+                        {"$set": {"status": "REJECTED", "rejection_reason": reason, "rejected_at": datetime.now(timezone.utc)}}
+                    )
+                return {"success": True, "message": f"Registration request for {req.get('name')} cancelled."}
+        except Exception as e:
+            print(f"[MongoDB Error] reject_registration_request: {e}")
+
+    for r in _fallback_registrations:
+        if str(r.get("_id")) == str(request_id) or str(r.get("id")) == str(request_id):
+            r["status"] = "REJECTED"
+            r["rejection_reason"] = reason
+            return {"success": True, "message": f"Registration request for {r.get('name')} cancelled."}
+
+    return {"success": False, "message": "Registration request not found."}
 
 def verify_registration_otp(request_id: str, entered_otp: str):
     db = get_db()

@@ -686,6 +686,14 @@ def allot_card_to_student(id):
     res = db.allot_rfid_card_to_student(id, rfid_uid, limit)
     return jsonify(res)
 
+@app.route("/api/admin/registration-requests/<id>/reject", methods=["POST"])
+@app.route("/api/admin/registration-requests/<id>", methods=["DELETE"])
+def reject_registration_request_route(id):
+    data = request.get_json(silent=True) or {}
+    reason = (data.get("reason") or "Cancelled by administrator").strip()
+    res = db.reject_registration_request(id, reason)
+    return jsonify(res)
+
 @app.route("/api/dashboard/monthly-summary", methods=["GET"])
 def monthly_summary():
     from datetime import datetime

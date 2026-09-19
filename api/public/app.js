@@ -790,6 +790,173 @@ function exportTransactionsCSV() {
 }
 
 // ------------------------------------------------------------
+//  ADMIN BENEFICIARY CRUD & QUOTA MANAGEMENT
+// ------------------------------------------------------------
+
+function openAddUserModal() {
+  document.getElementById('modal-title').textContent = 'Register Beneficiary Card';
+  document.getElementById('form-is-edit').value = '0';
+  document.getElementById('form-name').value = '';
+  document.getElementById('form-aadhaar').value = '';
+  const uidInput = document.getElementById('form-uid');
+  uidInput.value = '';
+  uidInput.removeAttribute('readonly');
+  document.getElementById('form-limit').value = 5;
+  document.getElementById('btn-modal-save').textContent = 'Save Beneficiary';
+  const fb = document.getElementById('form-aadhaar-feedback');
+  if (fb) {
+    fb.className = 'aadhaar-feedback';
+    fb.innerHTML = '<span class="indicator-icon">ℹ️</span><span class="indicator-text">Verhoeff checksum checked on entry</span>';
+  }
+  document.getElementById('user-modal').classList.remove('hidden');
+}
+
+function openEditUserModal(uid, name, limit, aadhaar) {
+  document.getElementById('modal-title').textContent = 'Edit Beneficiary Details & Quota';
+  document.getElementById('form-is-edit').value = '1';
+  document.getElementById('form-name').value = name || '';
+  const uidInput = document.getElementById('form-uid');
+  uidInput.value = uid || '';
+  uidInput.setAttribute('readonly', 'true');
+  document.getElementById('form-limit').value = limit || 5;
+  document.getElementById('btn-modal-save').textContent = 'Update Beneficiary';
+  
+  const aadhaarInput = document.getElementById('form-aadhaar');
+  aadhaarInput.value = aadhaar || '';
+  formatAndValidateAadhaar(aadhaarInput, 'form-aadhaar-feedback');
+
+  document.getElementById('user-modal').classList.remove('hidden');
+}
+
+function closeUserModal() {
+  document.getElementById('user-modal').classList.add('hidden');
+}
+
+async function handleUserSubmit(e) {
+  e.preventDefault();
+  const isEdit = document.getElementById('form-is-edit').value === '1';
+  const uid = document.getElementById('form-uid').value.trim().toUpperCase();
+  const name = document.getElementById('form-name').value.trim();
+  const limit = parseInt(document.getElementById('form-limit').value, 10) || 5;
+  const aadhaar = document.getElementById('form-aadhaar').value.replace(/\D/g, '');
+
+  if (!uid || !name) {
+    showToast('Name and RFID UID are required.', 'error');
+    return;
+  }
+
+  if (aadhaar && !validateVerhoeff(aadhaar)) {
+    showToast('Invalid 12-digit Aadhaar number (Verhoeff checksum failed).', 'error');
+    return;
+  }
+
+  const saveBtn = document.getElementById('btn-modal-save');
+  saveBtn.disabled = true;
+  saveBtn.textContent = 'Saving...';
+
+  try {
+    let res;
+    if (isEdit) {
+      res = await fetch(`/api/users/${encodeURIComponent(uid)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name, monthly_limit: limit, aadhaar_no: aadhaar })
+      });
+    } else {
+      res = await fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rfid_uid: uid, name: name, monthly_limit: limit, aadhaar_no: aadhaar })
+      });
+    }
+
+    const data = await res.json();
+    if (data.success) {
+      showToast(data.message || (isEdit ? 'Beneficiary updated!' : 'Beneficiary registered!'), 'success');
+      closeUserModal();
+      await fetchAdminDashboardData();
+    } else {
+      showToast(data.message || 'Operation failed.', 'error');
+    }
+  } catch (err) {
+    console.error('Error saving beneficiary:', err);
+    showToast('Network error saving beneficiary.', 'error');
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.textContent = isEdit ? 'Update Beneficiary' : 'Save Beneficiary';
+  }
+}
+
+async function deleteUser(uid, name) {
+  const cleanUid = (uid || '').trim().toUpperCase();
+  if (!confirm(`Are you sure you want to delete beneficiary "${name}" (UID: ${cleanUid})?\nThis will remove their card registration from the system.`)) {
+    return;
+  }
+
+  try {
+    const res = await fetch(`/api/users/${encodeURIComponent(cleanUid)}`, {
+      method: 'DELETE'
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast(data.message || `Deleted card ${cleanUid}.`, 'success');
+      await fetchAdminDashboardData();
+    } else {
+      showToast(data.message || 'Could not delete beneficiary.', 'error');
+    }
+  } catch (err) {
+    showToast('Network error deleting beneficiary.', 'error');
+  }
+}
+
+async function resetSingleUser(uid) {
+  const cleanUid = (uid || '').trim().toUpperCase();
+  if (!confirm(`Reset monthly pad usage to 0 for card ${cleanUid}?`)) {
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/users/reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rfid_uid: cleanUid })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast(data.message || `Reset quota for card ${cleanUid}.`, 'success');
+      await fetchAdminDashboardData();
+    } else {
+      showToast(data.message || 'Could not reset quota.', 'error');
+    }
+  } catch (err) {
+    showToast('Network error resetting quota.', 'error');
+  }
+}
+
+async function confirmResetAll() {
+  if (!confirm('Are you sure you want to reset monthly pad usage to 0 for ALL registered beneficiaries?')) {
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/users/reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast(data.message || 'All beneficiary quotas reset to 0.', 'success');
+      await fetchAdminDashboardData();
+    } else {
+      showToast(data.message || 'Could not reset all quotas.', 'error');
+    }
+  } catch (err) {
+    showToast('Network error resetting all quotas.', 'error');
+  }
+}
+
+// ------------------------------------------------------------
 //  ADMIN QUEUES: REFILL PROOFS, ALLOTMENTS & EMERGENCY REQUESTS
 // ------------------------------------------------------------
 
@@ -908,12 +1075,38 @@ async function fetchAdminRegistrationRequests() {
             <button class="btn btn-primary btn-sm" onclick="openAllotModal('${escapeHtml(id)}', '${escapeHtml(req.name)}', '${maskedAadhaar}', '${escapeHtml(req.email || '')}', '${escapeHtml(req.department || '')}')">
               💳 Allot RFID Card
             </button>
+            <button class="btn btn-danger-subtle btn-sm" onclick="cancelRegistrationRequest('${escapeHtml(id)}', '${escapeHtml(req.name)}')">
+              ❌ Cancel / Reject
+            </button>
           </div>
         </div>
       `;
     }).join('');
   } catch (err) {
     console.warn('Could not load allotments queue:', err);
+  }
+}
+
+async function cancelRegistrationRequest(reqId, name) {
+  if (!confirm(`Are you sure you want to cancel and reject the card registration request for "${name}"?`)) {
+    return;
+  }
+
+  try {
+    const res = await fetch(`/api/admin/registration-requests/${encodeURIComponent(reqId)}/reject`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'Cancelled by administrator' })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast(data.message || 'Request cancelled.', 'success');
+      await fetchAdminDashboardData();
+    } else {
+      showToast(data.message || 'Could not cancel request.', 'error');
+    }
+  } catch (err) {
+    showToast('Network error cancelling request.', 'error');
   }
 }
 
@@ -1006,13 +1199,13 @@ async function fetchAdminEmergencyRequests() {
             <span>Requested: ${escapeHtml(req.timestamp || '')}</span>
           </div>
           <div class="queue-actions-row">
-            <button class="btn btn-primary btn-sm" onclick="handleEmergencyAction('${req.id}', 'grant', 1)">
+            <button class="btn btn-primary btn-sm" onclick="handleEmergencyAction('${escapeHtml(req.id || req._id)}', 'grant', 1)">
               Grant +1 Pad
             </button>
-            <button class="btn btn-primary btn-sm" onclick="handleEmergencyAction('${req.id}', 'grant', 2)">
+            <button class="btn btn-primary btn-sm" onclick="handleEmergencyAction('${escapeHtml(req.id || req._id)}', 'grant', 2)">
               Grant +2 Pads
             </button>
-            <button class="btn btn-danger-subtle btn-sm" onclick="handleEmergencyAction('${req.id}', 'reject', 0)">
+            <button class="btn btn-danger-subtle btn-sm" onclick="handleEmergencyAction('${escapeHtml(req.id || req._id)}', 'reject', 0)">
               Dismiss
             </button>
           </div>
