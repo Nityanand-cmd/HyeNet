@@ -311,13 +311,14 @@ def reset_all_monthly():
     db = get_db()
     if db is not None:
         try:
-            db.users.update_many({}, {"$set": {"used_pads": 0}})
+            db.users.update_many({}, {"$set": {"used_pads": 0, "emergency_extra_pads": 0}})
             return True
         except Exception as e:
             print(f"[MongoDB Error] reset_all_monthly: {e}")
 
     for uid in _fallback_users:
         _fallback_users[uid]["used_pads"] = 0
+        _fallback_users[uid]["emergency_extra_pads"] = 0
     return True
 
 def reset_user_monthly(uid: str):
@@ -325,13 +326,14 @@ def reset_user_monthly(uid: str):
     db = get_db()
     if db is not None:
         try:
-            db.users.update_one({"rfid_uid": uid}, {"$set": {"used_pads": 0}})
+            db.users.update_one({"rfid_uid": uid}, {"$set": {"used_pads": 0, "emergency_extra_pads": 0}})
             return True
         except Exception as e:
             print(f"[MongoDB Error] reset_user_monthly: {e}")
 
     if uid in _fallback_users:
         _fallback_users[uid]["used_pads"] = 0
+        _fallback_users[uid]["emergency_extra_pads"] = 0
         return True
     return False
 
@@ -389,6 +391,7 @@ def delete_user(uid: str):
 def record_dispense(uid: str, device_id: str, quantity: int):
     """
     Atomically verifies balance and records the dispense transaction.
+    Takes into account monthly_limit plus temporary emergency_extra_pads.
     """
     uid = uid.strip().upper()
     db = get_db()
@@ -400,8 +403,10 @@ def record_dispense(uid: str, device_id: str, quantity: int):
                 return {"success": False, "reason": "CARD_NOT_FOUND", "message": "Card not registered"}
 
             monthly_limit = user.get("monthly_limit", DEFAULT_MONTHLY_LIMIT)
+            extra_granted = user.get("emergency_extra_pads", 0)
+            effective_limit = monthly_limit + extra_granted
             current_used = user.get("used_pads", 0)
-            remaining = monthly_limit - current_used
+            remaining = max(0, effective_limit - current_used)
 
             if quantity > remaining:
                 log_transaction(uid, user.get("name", "Unknown"), device_id, quantity, "DENIED_LIMIT_REACHED", remaining)
@@ -414,7 +419,7 @@ def record_dispense(uid: str, device_id: str, quantity: int):
 
             # Atomic increment in MongoDB
             result = db.users.find_one_and_update(
-                {"rfid_uid": uid, "used_pads": {"$lte": monthly_limit - quantity}},
+                {"rfid_uid": uid, "used_pads": {"$lte": effective_limit - quantity}},
                 {"$inc": {"used_pads": quantity}, "$set": {"last_dispensed_at": datetime.now(timezone.utc)}},
                 return_document=pymongo.ReturnDocument.AFTER
             )
@@ -422,7 +427,7 @@ def record_dispense(uid: str, device_id: str, quantity: int):
             if not result:
                 return {"success": False, "reason": "CONCURRENCY_ERROR", "message": "Limit check failed"}
 
-            new_remaining = monthly_limit - result["used_pads"]
+            new_remaining = max(0, effective_limit - result["used_pads"])
             
             # Log transaction
             log_transaction(uid, user.get("name", "Unknown"), device_id, quantity, "DISPENSED", new_remaining)
@@ -444,7 +449,8 @@ def record_dispense(uid: str, device_id: str, quantity: int):
                 "dispensed": quantity,
                 "used_pads": result["used_pads"],
                 "remaining": new_remaining,
-                "remaining_after": new_remaining
+                "remaining_after": new_remaining,
+                "emergency_extra_pads": extra_granted
             }
 
         except Exception as e:
@@ -457,15 +463,17 @@ def record_dispense(uid: str, device_id: str, quantity: int):
 
     user = _fallback_users[uid]
     monthly_limit = user.get("monthly_limit", DEFAULT_MONTHLY_LIMIT)
+    extra_granted = user.get("emergency_extra_pads", 0)
+    effective_limit = monthly_limit + extra_granted
     current_used = user.get("used_pads", 0)
-    remaining = monthly_limit - current_used
+    remaining = max(0, effective_limit - current_used)
 
     if quantity > remaining:
         log_transaction(uid, user["name"], device_id, quantity, "DENIED_LIMIT_REACHED", remaining)
         return {"success": False, "reason": "LIMIT_EXCEEDED", "remaining": remaining}
 
     user["used_pads"] += quantity
-    new_remaining = monthly_limit - user["used_pads"]
+    new_remaining = max(0, effective_limit - user["used_pads"])
     log_transaction(uid, user["name"], device_id, quantity, "DISPENSED", new_remaining)
     update_hopper_stock(quantity, is_refill=False)
 
@@ -475,7 +483,8 @@ def record_dispense(uid: str, device_id: str, quantity: int):
         "dispensed": quantity,
         "used_pads": user["used_pads"],
         "remaining": new_remaining,
-        "remaining_after": new_remaining
+        "remaining_after": new_remaining,
+        "emergency_extra_pads": extra_granted
     }
 
 def log_transaction(uid: str, name: str, device_id: str, quantity: int, status: str, remaining_after: int):
@@ -806,7 +815,6 @@ def verify_refill_log(log_id: str, action: str = "approve"):
                     {"_id": ObjectId(log_id)},
                     {"$set": {"status": "APPROVED", "verified_at": datetime.now(timezone.utc)}}
                 )
-                log_transaction("REFILL-CREW", log.get("attendant_name"), "hygienet-01", log.get("quantity_added", 50), "RESTOCKED_VERIFIED", new_stock)
                 return {"success": True, "message": f"Restock verified! Hopper stock updated to {new_stock} pads."}
             else:
                 db.refill_logs.update_one(
@@ -919,13 +927,12 @@ def resolve_emergency_request(request_id: str, action: str = "approve", extra_pa
             q_filter = {"_id": ObjectId(request_id)} if ObjectId.is_valid(request_id) else {"_id": str(request_id)}
             
             if action in ["approve", "grant"]:
-                db.users.update_one({"rfid_uid": uid}, {"$inc": {"monthly_limit": extra_pads}})
+                db.users.update_one({"rfid_uid": uid}, {"$inc": {"emergency_extra_pads": extra_pads}})
                 db.emergency_requests.update_one(
                     q_filter,
                     {"$set": {"status": "APPROVED", "pads_granted": extra_pads, "resolved_at": datetime.now(timezone.utc)}}
                 )
-                log_transaction(uid, req.get("user_name"), "ADMIN-OVERRIDE", extra_pads, "EMERGENCY_GRANTED", 0)
-                return {"success": True, "message": f"Approved +{extra_pads} emergency pad(s) for {req.get('user_name')}."}
+                return {"success": True, "message": f"Approved temporary +{extra_pads} emergency pad(s) for {req.get('user_name')}."}
             else:
                 db.emergency_requests.update_one(
                     q_filter,
@@ -941,8 +948,8 @@ def resolve_emergency_request(request_id: str, action: str = "approve", extra_pa
                 r["status"] = "APPROVED"
                 r["pads_granted"] = extra_pads
                 if r.get("rfid_uid") in _fallback_users:
-                    _fallback_users[r.get("rfid_uid")]["monthly_limit"] += extra_pads
-                return {"success": True, "message": f"Approved +{extra_pads} emergency pad(s)."}
+                    _fallback_users[r.get("rfid_uid")]["emergency_extra_pads"] = _fallback_users[r.get("rfid_uid")].get("emergency_extra_pads", 0) + extra_pads
+                return {"success": True, "message": f"Approved temporary +{extra_pads} emergency pad(s)."}
             else:
                 r["status"] = "REJECTED"
                 return {"success": True, "message": "Emergency request declined/dismissed."}
@@ -1242,9 +1249,22 @@ def get_monthly_dispense_summary():
 
 def simulate_month_rollover():
     """
-    Simulates a new monthly cycle: resets used_pads to 0 for all users and logs the event.
+    Simulates a new monthly cycle: resets used_pads to 0 and emergency_extra_pads to 0 for all users.
     """
     reset_all_monthly()
-    log_transaction("SYSTEM", "Administrator", "hygienet-01", 0, "MONTHLY_ROLLOVER_SIMULATED", 0)
-    return {"success": True, "message": "Simulated new monthly cycle! All beneficiary pad quotas reset to 0 used."}
+    return {"success": True, "message": "Simulated new monthly cycle! All beneficiary pad quotas reset to standard limit."}
+
+def clear_all_transactions():
+    """
+    Clears all transaction records from MongoDB Atlas and fallback memory.
+    """
+    db = get_db()
+    if db is not None:
+        try:
+            db.transactions.delete_many({})
+            return True
+        except Exception as e:
+            print(f"[MongoDB Error] clear_all_transactions: {e}")
+    _fallback_transactions.clear()
+    return True
 

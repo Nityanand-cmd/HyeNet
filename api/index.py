@@ -173,8 +173,10 @@ def verify_card():
         })
 
     monthly_limit = user.get("monthly_limit", DEFAULT_MONTHLY_LIMIT)
+    extra_granted = user.get("emergency_extra_pads", 0)
+    effective_limit = monthly_limit + extra_granted
     used_pads = user.get("used_pads", 0)
-    remaining = max(0, monthly_limit - used_pads)
+    remaining = max(0, effective_limit - used_pads)
 
     if remaining <= 0:
         db.log_transaction(uid, user.get("name", "Unknown"), device_id, 0, "DENIED_LIMIT_REACHED", 0)
@@ -184,6 +186,8 @@ def verify_card():
             "name": user.get("name", "User"),
             "used_pads": used_pads,
             "monthly_limit": monthly_limit,
+            "emergency_extra_pads": extra_granted,
+            "effective_limit": effective_limit,
             "remaining": 0,
             "message": "Monthly pad quota exhausted."
         })
@@ -193,6 +197,8 @@ def verify_card():
         "authorized": True,
         "name": user.get("name", "User"),
         "monthly_limit": monthly_limit,
+        "emergency_extra_pads": extra_granted,
+        "effective_limit": effective_limit,
         "used_pads": used_pads,
         "remaining": remaining,
         "max_selectable": min(remaining, 5) # Safe limit per transaction
@@ -267,6 +273,11 @@ def list_transactions():
     limit = int(request.args.get("limit", 50))
     txs = db.get_recent_transactions(limit)
     return jsonify(txs)
+
+@app.route("/api/transactions/clear", methods=["POST", "DELETE"])
+def clear_all_tx_route():
+    db.clear_all_transactions()
+    return jsonify({"success": True, "message": "All transactions have been deleted."})
 
 @app.after_request
 def set_cache_headers(response):
@@ -477,8 +488,10 @@ def auth_login():
     
     actual_uid = user.get("rfid_uid", user_uid)
     limit = user.get("monthly_limit", DEFAULT_MONTHLY_LIMIT)
+    extra = user.get("emergency_extra_pads", 0)
+    effective_limit = limit + extra
     used = user.get("used_pads", 0)
-    remaining = max(0, limit - used)
+    remaining = max(0, effective_limit - used)
     cycle = db.get_user_cycle(actual_uid)
     
     return jsonify({
@@ -488,6 +501,8 @@ def auth_login():
             "name": user.get("name", "Beneficiary"),
             "rfid_uid": actual_uid,
             "monthly_limit": limit,
+            "emergency_extra_pads": extra,
+            "effective_limit": effective_limit,
             "used_pads": used,
             "remaining": remaining,
             "active": user.get("active", True),
@@ -505,8 +520,10 @@ def get_user_profile(uid):
     
     actual_uid = user.get("rfid_uid", uid)
     limit = user.get("monthly_limit", DEFAULT_MONTHLY_LIMIT)
+    extra = user.get("emergency_extra_pads", 0)
+    effective_limit = limit + extra
     used = user.get("used_pads", 0)
-    remaining = max(0, limit - used)
+    remaining = max(0, effective_limit - used)
     cycle = db.get_user_cycle(actual_uid)
     return jsonify({
         "success": True,
@@ -514,6 +531,8 @@ def get_user_profile(uid):
             "name": user.get("name", "Beneficiary"),
             "rfid_uid": actual_uid,
             "monthly_limit": limit,
+            "emergency_extra_pads": extra,
+            "effective_limit": effective_limit,
             "used_pads": used,
             "remaining": remaining,
             "active": user.get("active", True),

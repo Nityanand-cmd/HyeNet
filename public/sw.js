@@ -2,11 +2,11 @@
 //  HygieNet Cloud — Progressive Web App Service Worker
 // ============================================================
 
-const CACHE_NAME = 'hygienet-pwa-v2.6';
+const CACHE_NAME = 'hygienet-pwa-v3.2';
 const ASSETS_TO_CACHE = [
   '/',
-  '/style.css?v=2.6',
-  '/app.js?v=2.6',
+  '/style.css?v=3.2',
+  '/app.js?v=3.2',
   '/manifest.json'
 ];
 

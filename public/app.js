@@ -687,9 +687,11 @@ function renderAdminUsers(users, defaultLimit = 5) {
 
   tbody.innerHTML = users.map(u => {
     const limit = u.monthly_limit || defaultLimit;
+    const extra = u.emergency_extra_pads || 0;
+    const effectiveLimit = limit + extra;
     const used = u.used_pads || 0;
-    const remaining = Math.max(0, limit - used);
-    const pct = Math.min(Math.round((used / limit) * 100), 100);
+    const remaining = Math.max(0, effectiveLimit - used);
+    const pct = Math.min(Math.round((used / effectiveLimit) * 100), 100);
     const isExhausted = remaining === 0;
 
     const statusBadge = isExhausted
@@ -707,13 +709,20 @@ function renderAdminUsers(users, defaultLimit = 5) {
       }
     }
 
+    const extraBadge = extra > 0
+      ? `<span class="badge badge-warn" style="font-size:10px; padding:2px 6px; margin-left:4px; font-weight:600;" title="Temporary Emergency Allowance: +${extra} pad(s)">+${extra} Emergency</span>`
+      : '';
+
     return `
       <tr>
         <td><strong>${escapeHtml(u.name)}</strong></td>
         <td>${aadhaarDisplay}</td>
         <td><code class="font-mono">${escapeHtml(u.rfid_uid)}</code></td>
         <td>
-          <div style="font-size:12px; font-weight:600">${used} / ${limit} pads</div>
+          <div style="font-size:12px; font-weight:600">
+            ${used} / ${limit} pads
+            ${extraBadge}
+          </div>
           <div class="progress-wrap">
             <div class="progress-bar ${isExhausted ? 'limit-reached' : ''}" style="width: ${pct}%"></div>
           </div>
@@ -722,8 +731,8 @@ function renderAdminUsers(users, defaultLimit = 5) {
         <td>${statusBadge}</td>
         <td class="text-right">
           <div class="action-btn-group">
-            <button class="btn-table-action" onclick="openEditUserModal('${escapeHtml(u.rfid_uid)}', '${escapeHtml(u.name)}', ${limit}, '${escapeHtml(u.aadhaar_no || '')}')" title="Edit Name or Monthly Quota">Edit</button>
-            <button class="btn-table-action" onclick="resetSingleUser('${escapeHtml(u.rfid_uid)}')" title="Reset used pads to 0">Reset</button>
+            <button class="btn-table-action" onclick="openEditUserModal('${escapeHtml(u.rfid_uid)}', '${escapeHtml(u.name)}', ${limit}, '${escapeHtml(u.aadhaar_no || '')}')" title="Edit Name or Base Quota">Edit</button>
+            <button class="btn-table-action" onclick="resetSingleUser('${escapeHtml(u.rfid_uid)}')" title="Reset used pads to 0 and clear temporary emergency grant">Reset</button>
             <button class="btn-table-action btn-del" onclick="deleteUser('${escapeHtml(u.rfid_uid)}', '${escapeHtml(u.name)}')" title="Delete Card">Delete</button>
           </div>
         </td>
@@ -734,12 +743,14 @@ function renderAdminUsers(users, defaultLimit = 5) {
 
 function renderAdminTransactions(txs) {
   const tbody = document.getElementById('tx-tbody');
-  if (!txs || txs.length === 0) {
+  // Strict filter: dispense events only, do not include restocks or admin actions
+  const dispenses = (txs || []).filter(t => !t.status || (!t.status.includes('RESTOCK') && !t.status.includes('REFILL')));
+  if (dispenses.length === 0) {
     tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4">No dispense activity logged yet.</td></tr>';
     return;
   }
 
-  tbody.innerHTML = txs.map(t => {
+  tbody.innerHTML = dispenses.map(t => {
     let badgeClass = 'badge-emerald';
     let statusLabel = 'Dispensed';
 
@@ -761,6 +772,27 @@ function renderAdminTransactions(txs) {
       </tr>
     `;
   }).join('');
+}
+
+async function clearLedgerPrompt() {
+  if (!confirm('Are you sure you want to clear all dispense transactions to date? This will permanently delete the transaction history.')) {
+    return;
+  }
+  try {
+    const res = await fetch('/api/transactions/clear', { method: 'POST' }).then(r => r.json());
+    if (res.success) {
+      showToast('Dispense ledger cleared successfully.', 'success');
+      cachedTransactions = [];
+      renderAdminTransactions([]);
+      if (typeof fetchAdminDashboardData === 'function') {
+        fetchAdminDashboardData();
+      }
+    } else {
+      showToast(res.message || 'Failed to clear ledger.', 'error');
+    }
+  } catch (err) {
+    showToast('Network error clearing ledger.', 'error');
+  }
 }
 
 function exportTransactionsCSV() {
@@ -1815,8 +1847,10 @@ async function loadUserProfile() {
 function renderUserProfile(u) {
   const name = u.name || 'Beneficiary';
   const limit = u.monthly_limit || 5;
+  const extra = u.emergency_extra_pads || 0;
+  const effectiveLimit = u.effective_limit || (limit + extra);
   const used = u.used_pads || 0;
-  const remaining = Math.max(0, limit - used);
+  const remaining = Math.max(0, effectiveLimit - used);
   const isExhausted = remaining === 0;
 
   // Banner details
@@ -1845,7 +1879,7 @@ function renderUserProfile(u) {
 
   // Quota circular ring calculation (r=50 -> circum = ~314.15)
   const circumference = 314.15;
-  const fraction = Math.min(Math.max(remaining / limit, 0), 1);
+  const fraction = Math.min(Math.max(remaining / effectiveLimit, 0), 1);
   const offset = circumference * (1 - fraction);
 
   const ringFill = document.getElementById('user-ring-fill');
@@ -1858,12 +1892,12 @@ function renderUserProfile(u) {
 
   // Numbers & text
   document.getElementById('user-quota-remaining').textContent = remaining;
-  document.getElementById('user-quota-limit').textContent = `${limit} pads`;
+  document.getElementById('user-quota-limit').textContent = extra > 0 ? `${limit} (+${extra} Extra) pads` : `${limit} pads`;
   document.getElementById('user-quota-used').textContent = `${used} pads`;
   document.getElementById('user-quota-rem-sub').textContent = `${remaining} pads`;
 
   // Linear progress bar
-  const pct = Math.min(Math.round((used / limit) * 100), 100);
+  const pct = Math.min(Math.round((used / effectiveLimit) * 100), 100);
   const pBar = document.getElementById('user-progress-bar');
   pBar.style.width = `${pct}%`;
   if (isExhausted) {
@@ -1872,16 +1906,26 @@ function renderUserProfile(u) {
     pBar.className = 'progress-bar';
   }
 
-  document.getElementById('user-progress-text').textContent = `${used} of ${limit} Collected`;
-  document.getElementById('user-max-label').textContent = `${limit} pads`;
+  document.getElementById('user-progress-text').textContent = `${used} of ${effectiveLimit} Collected`;
+  document.getElementById('user-max-label').textContent = extra > 0 ? `${limit} (+${extra} extra) pads` : `${limit} pads`;
 
   // Emergency banner visibility
   const emergBanner = document.getElementById('user-emergency-banner');
   if (emergBanner) {
-    if (isExhausted) {
-      emergBanner.style.display = 'flex';
+    emergBanner.style.display = 'flex'; // Keep accessible so students in urgent need can request extra pads anytime
+  }
+
+  // Temporary extra pads granted notice
+  const extraNotice = document.getElementById('user-emergency-active-notice');
+  const extraNoticeText = document.getElementById('user-emergency-active-text');
+  if (extraNotice && extraNoticeText) {
+    if (extra > 0) {
+      extraNotice.classList.remove('hidden');
+      extraNotice.style.display = 'flex';
+      extraNoticeText.innerHTML = `You have been granted <strong>+${extra} temporary emergency pad(s)</strong> for this cycle. Your standard monthly quota remains <strong>${limit} pads</strong> and will renew next cycle.`;
     } else {
-      emergBanner.style.display = 'flex'; // Keep accessible so students in urgent need can request extra pads anytime
+      extraNotice.classList.add('hidden');
+      extraNotice.style.display = 'none';
     }
   }
 }
