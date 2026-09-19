@@ -30,6 +30,8 @@ DEVICE_KEY = os.getenv("DEVICE_KEY", "hygienet_r4_sec_2026_x89")
 DEFAULT_MONTHLY_LIMIT = int(os.getenv("MONTHLY_DEFAULT_LIMIT", "5"))
 ADMIN_ID = os.getenv("ADMIN_ID", "admin").strip()
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123").strip()
+REFILL_ID = os.getenv("REFILL_ID", "refill").strip()
+REFILL_PASSWORD = os.getenv("REFILL_PASSWORD", "refill123").strip()
 
 def verify_device_key(req):
     """
@@ -82,6 +84,33 @@ def app_js():
         return Response(static_content.APP_JS, mimetype="application/javascript")
     return "Not found", 404
 
+@app.route("/manifest.json")
+def manifest_json():
+    pub_file = BASE_DIR / "public" / "manifest.json"
+    if pub_file.exists():
+        return send_from_directory(str(BASE_DIR / "public"), "manifest.json", mimetype="application/manifest+json")
+    api_pub = BASE_DIR / "api" / "public" / "manifest.json"
+    if api_pub.exists():
+        return send_from_directory(str(BASE_DIR / "api" / "public"), "manifest.json", mimetype="application/manifest+json")
+    return jsonify({
+        "name": "HygieNet Cloud",
+        "short_name": "HygieNet",
+        "start_url": "/",
+        "display": "standalone",
+        "background_color": "#090e1a",
+        "theme_color": "#10b981"
+    })
+
+@app.route("/sw.js")
+def service_worker():
+    pub_file = BASE_DIR / "public" / "sw.js"
+    if pub_file.exists():
+        return send_from_directory(str(BASE_DIR / "public"), "sw.js", mimetype="application/javascript")
+    api_pub = BASE_DIR / "api" / "public" / "sw.js"
+    if api_pub.exists():
+        return send_from_directory(str(BASE_DIR / "api" / "public"), "sw.js", mimetype="application/javascript")
+    return Response("self.addEventListener('fetch', function(){});", mimetype="application/javascript")
+
 
 
 # ------------------------------------------------------------
@@ -110,7 +139,7 @@ def device_ping():
         "server_time": db.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     })
 
-@app.route("/api/card/verify", methods=["POST"])
+@app.route("/api/card/verify", methods=["GET", "POST"])
 def verify_card():
     """
     Called by UNO R4 WiFi when an RFID card is tapped.
@@ -120,9 +149,13 @@ def verify_card():
     if not verify_device_key(request):
         return jsonify({"authorized": False, "reason": "UNAUTHORIZED_DEVICE", "message": "Invalid Device Key"}), 401
 
-    data = request.get_json(silent=True) or {}
-    uid = data.get("uid", "").strip().upper()
-    device_id = data.get("device_id", "hygienet-01")
+    if request.method == "GET":
+        uid = request.args.get("uid", "").strip().upper()
+        device_id = request.args.get("device_id", "hygienet-01")
+    else:
+        data = request.get_json(silent=True) or {}
+        uid = data.get("uid", "").strip().upper()
+        device_id = data.get("device_id", "hygienet-01")
 
     if not uid:
         return jsonify({"authorized": False, "reason": "NO_UID", "message": "UID missing"}), 400
@@ -166,6 +199,7 @@ def verify_card():
     })
 
 @app.route("/api/dispense/complete", methods=["POST"])
+@app.route("/api/dispense/record", methods=["POST"])
 def dispense_complete():
     """
     Called by UNO R4 WiFi after user presses CONFIRM button.
@@ -208,11 +242,12 @@ def save_user():
     uid = data.get("rfid_uid", "").strip().upper()
     name = data.get("name", "").strip()
     limit = int(data.get("monthly_limit", DEFAULT_MONTHLY_LIMIT))
+    aadhaar = data.get("aadhaar_no", "").strip()
 
     if not uid or not name:
         return jsonify({"success": False, "message": "UID and Name are required."}), 400
 
-    db.upsert_user(uid, name, limit)
+    db.upsert_user(uid, name, limit, aadhaar)
     return jsonify({"success": True, "message": f"User {name} saved successfully."})
 
 @app.route("/api/users/reset", methods=["POST"])
@@ -414,6 +449,22 @@ def auth_login():
             "success": False,
             "message": "Invalid Admin ID or Password."
         }), 401
+
+    # Restock / Refill Staff login check
+    if role == "refill":
+        refill_id = str(data.get("id", "")).strip()
+        refill_pass = str(data.get("password", "")).strip()
+        if refill_id == REFILL_ID and refill_pass == REFILL_PASSWORD:
+            return jsonify({
+                "success": True,
+                "role": "refill",
+                "name": "Restock Attendant",
+                "message": "Welcome, Restock Attendant."
+            })
+        return jsonify({
+            "success": False,
+            "message": "Invalid Restock Attendant ID or Password."
+        }), 401
     
     # Beneficiary / User login check
     user_uid = str(data.get("uid") or data.get("id", "")).strip().upper()
@@ -484,11 +535,12 @@ def update_user_details(uid):
     data = request.get_json(silent=True) or {}
     name = data.get("name", "").strip()
     limit = int(data.get("monthly_limit", DEFAULT_MONTHLY_LIMIT))
+    aadhaar = data.get("aadhaar_no", "").strip()
     
     if not name:
         return jsonify({"success": False, "message": "Name cannot be empty."}), 400
         
-    ok = db.update_user(uid, name, limit)
+    ok = db.update_user(uid, name, limit, aadhaar)
     if ok:
         return jsonify({"success": True, "message": f"Beneficiary {name} updated successfully."})
     return jsonify({"success": False, "message": "Failed to update beneficiary."}), 400
@@ -499,6 +551,168 @@ def delete_user_record(uid):
     if ok:
         return jsonify({"success": True, "message": f"Beneficiary card {uid} deleted successfully."})
     return jsonify({"success": False, "message": "Beneficiary not found or could not be deleted."}), 404
+
+# ============================================================
+#  HOPPER, REFILL STAFF, EMERGENCY & REGISTRATION ENDPOINTS
+# ============================================================
+
+@app.route("/api/hopper", methods=["GET"])
+def get_hopper():
+    status = db.get_hopper_status()
+    if isinstance(status, dict):
+        status.setdefault("success", True)
+    return jsonify(status)
+
+@app.route("/api/admin/hopper/refill", methods=["POST"])
+def admin_refill_hopper():
+    data = request.get_json(silent=True) or {}
+    stock = int(data.get("amount", 50))
+    res = db.update_hopper_stock(stock, is_refill=True)
+    return jsonify({"success": True, "hopper": res, "message": f"Hopper stock updated to {stock} pads."})
+
+@app.route("/api/refill/submit", methods=["POST"])
+def submit_refill():
+    data = request.get_json(silent=True) or {}
+    attendant = (data.get("staff_name") or data.get("attendant_name") or "Restock Attendant").strip()
+    qty = int(data.get("quantity_added", 50))
+    photos = data.get("photos", [])
+    if not photos:
+        if data.get("photo_hopper_base64"):
+            photos.append(data.get("photo_hopper_base64"))
+        if data.get("photo_tray_base64"):
+            photos.append(data.get("photo_tray_base64"))
+    notes = (data.get("remarks") or data.get("notes") or "").strip()
+
+    if qty <= 0:
+        return jsonify({"success": False, "message": "Quantity added must be greater than 0."}), 400
+
+    res = db.create_refill_log(attendant, qty, photos, notes)
+    if isinstance(res, dict) and "refill_id" not in res:
+        log_obj = res.get("log", {})
+        res["refill_id"] = str(log_obj.get("_id", ""))
+    return jsonify(res)
+
+@app.route("/api/admin/refills", methods=["GET"])
+def list_refill_logs():
+    status = request.args.get("status")
+    logs = db.get_refill_logs(status)
+    if isinstance(logs, list):
+        return jsonify({"success": True, "refills": logs})
+    return jsonify(logs)
+
+@app.route("/api/admin/refills/<id>/verify", methods=["POST"])
+def verify_refill(id):
+    data = request.get_json(silent=True) or {}
+    action = data.get("action", "approve").lower()
+    res = db.verify_refill_log(id, action)
+    return jsonify(res)
+
+@app.route("/api/user/emergency-request", methods=["POST"])
+def submit_emergency_request():
+    data = request.get_json(silent=True) or {}
+    uid = data.get("rfid_uid", "").strip()
+    reason = (data.get("reason") or "Emergency pad needed on campus").strip()
+    if not uid:
+        return jsonify({"success": False, "message": "RFID Card UID is required."}), 400
+    res = db.create_emergency_request(uid, reason)
+    if isinstance(res, dict) and "request_id" not in res:
+        req_obj = res.get("request", {})
+        res["request_id"] = str(req_obj.get("_id", ""))
+    return jsonify(res)
+
+@app.route("/api/admin/emergency-requests", methods=["GET"])
+def list_emergency_requests():
+    status = request.args.get("status")
+    reqs = db.get_emergency_requests(status)
+    if isinstance(reqs, list):
+        return jsonify({"success": True, "requests": reqs})
+    return jsonify(reqs)
+
+@app.route("/api/admin/emergency-requests/<id>/action", methods=["POST"])
+def handle_emergency_request_action(id):
+    data = request.get_json(silent=True) or {}
+    action = data.get("action", "approve").lower()
+    extra_pads = int(data.get("extra_pads", 1))
+    res = db.resolve_emergency_request(id, action, extra_pads)
+    return jsonify(res)
+
+@app.route("/api/auth/register-request", methods=["POST"])
+def register_student_request():
+    data = request.get_json(silent=True) or {}
+    name = data.get("name", "").strip()
+    aadhaar = data.get("aadhaar_no", "").strip()
+    email = data.get("email", "").strip()
+
+    if not name or not aadhaar or not email:
+        return jsonify({"success": False, "message": "Name, Aadhaar Number, and Email are required."}), 400
+
+    res = db.create_registration_request(name, aadhaar, email)
+    if not res.get("success"):
+        return jsonify(res), 400
+    if isinstance(res, dict):
+        res["dev_otp"] = res.get("otp")
+    return jsonify(res)
+
+@app.route("/api/auth/verify-registration-otp", methods=["POST"])
+def verify_student_otp():
+    data = request.get_json(silent=True) or {}
+    req_id = data.get("request_id", "").strip()
+    otp = data.get("otp", "").strip()
+
+    if not req_id or not otp:
+        return jsonify({"success": False, "message": "Request ID and OTP are required."}), 400
+
+    res = db.verify_registration_otp(req_id, otp)
+    if not res.get("success"):
+        return jsonify(res), 400
+    return jsonify(res)
+
+@app.route("/api/admin/registration-requests", methods=["GET"])
+def list_pending_registrations():
+    reqs = db.get_pending_registrations()
+    if isinstance(reqs, list):
+        return jsonify({"success": True, "requests": reqs})
+    return jsonify(reqs)
+
+@app.route("/api/admin/registration-requests/<id>/allot", methods=["POST"])
+def allot_card_to_student(id):
+    data = request.get_json(silent=True) or {}
+    rfid_uid = data.get("rfid_uid", "").strip()
+    limit = int(data.get("monthly_limit", DEFAULT_MONTHLY_LIMIT))
+
+    if not rfid_uid:
+        return jsonify({"success": False, "message": "Please enter an RFID Card UID to allot."}), 400
+
+    res = db.allot_rfid_card_to_student(id, rfid_uid, limit)
+    return jsonify(res)
+
+@app.route("/api/dashboard/monthly-summary", methods=["GET"])
+def monthly_summary():
+    from datetime import datetime
+    now = datetime.now()
+    month_names = {
+        1: "January", 2: "February", 3: "March", 4: "April",
+        5: "May", 6: "June", 7: "July", 8: "August",
+        9: "September", 10: "October", 11: "November", 12: "December"
+    }
+    res = db.get_monthly_dispense_summary()
+    return jsonify({
+        "success": True,
+        "current_month": now.month,
+        "current_month_name": month_names.get(now.month, ""),
+        "current_year": now.year,
+        "monthly_summary": res
+    })
+
+@app.route("/api/admin/simulate-month-rollover", methods=["POST"])
+def simulate_rollover():
+    res = db.simulate_month_rollover()
+    from datetime import datetime
+    now = datetime.now()
+    if isinstance(res, dict):
+        res.setdefault("new_month", (now.month % 12) + 1)
+    return jsonify(res)
+
 
 
 # ------------------------------------------------------------

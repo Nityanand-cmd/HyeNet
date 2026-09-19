@@ -1,11 +1,88 @@
 // ============================================================
-//  HygieNet Cloud Edition — Clean Dashboard & Portals JS
+//  HygieNet Cloud Edition — Clean Dashboard & Portals JS (v3.0)
 // ============================================================
 
 const STORAGE_KEY = 'hygienet_auth_session';
 let pollInterval = null;
 let cachedUsers = [];
 let cachedTransactions = [];
+let cachedHopper = { current_stock: 50, capacity: 60, status: 'READY' };
+
+// Refill form photo storage (base64)
+let refillPhoto1Base64 = '';
+let refillPhoto2Base64 = '';
+
+// Active registration request ID
+let tempRegistrationId = null;
+
+// ------------------------------------------------------------
+//  VERHOEFF ALGORITHM (UIDAI Standard Mathematical Checksum)
+// ------------------------------------------------------------
+
+const VERHOEFF_D = [
+  [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+  [1, 2, 3, 4, 0, 6, 7, 8, 9, 5],
+  [2, 3, 4, 0, 1, 7, 8, 9, 5, 6],
+  [3, 4, 0, 1, 2, 8, 9, 5, 6, 7],
+  [4, 0, 1, 2, 3, 9, 5, 6, 7, 8],
+  [5, 9, 8, 7, 6, 0, 4, 3, 2, 1],
+  [6, 5, 9, 8, 7, 1, 0, 4, 3, 2],
+  [7, 6, 5, 9, 8, 2, 1, 0, 4, 3],
+  [8, 7, 6, 5, 9, 3, 2, 1, 0, 4],
+  [9, 8, 7, 6, 5, 4, 3, 2, 1, 0]
+];
+
+const VERHOEFF_P = [
+  [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+  [1, 5, 7, 6, 2, 8, 3, 0, 9, 4],
+  [5, 8, 0, 3, 7, 9, 6, 1, 4, 2],
+  [8, 9, 1, 6, 0, 4, 3, 5, 2, 7],
+  [9, 4, 5, 3, 1, 2, 6, 8, 7, 0],
+  [4, 2, 8, 6, 5, 7, 3, 9, 0, 1],
+  [2, 7, 9, 3, 8, 0, 6, 4, 1, 5],
+  [7, 0, 4, 6, 9, 1, 3, 2, 5, 8]
+];
+
+function validateVerhoeff(numStr) {
+  if (!numStr) return false;
+  const clean = String(numStr).replace(/\D/g, '');
+  if (clean.length !== 12) return false;
+  let c = 0;
+  const digits = clean.split('').reverse().map(Number);
+  for (let i = 0; i < digits.length; i++) {
+    c = VERHOEFF_D[c][VERHOEFF_P[i % 8][digits[i]]];
+  }
+  return c === 0;
+}
+
+function formatAndValidateAadhaar(inputEl, feedbackElId = 'aadhaar-feedback') {
+  const raw = inputEl.value.replace(/\D/g, '').slice(0, 12);
+  let formatted = '';
+  for (let i = 0; i < raw.length; i += 4) {
+    formatted += (i > 0 ? ' ' : '') + raw.slice(i, i + 4);
+  }
+  inputEl.value = formatted;
+
+  const feedback = document.getElementById(feedbackElId);
+  if (!feedback) return;
+
+  if (raw.length === 0) {
+    feedback.className = 'aadhaar-feedback';
+    feedback.innerHTML = '<span class="indicator-icon">ℹ️</span><span class="indicator-text">Enter 12 digits to verify checksum</span>';
+  } else if (raw.length < 12) {
+    feedback.className = 'aadhaar-feedback';
+    feedback.innerHTML = `<span class="indicator-icon">ℹ️</span><span class="indicator-text">${raw.length}/12 digits entered</span>`;
+  } else {
+    const isValid = validateVerhoeff(raw);
+    if (isValid) {
+      feedback.className = 'aadhaar-feedback valid';
+      feedback.innerHTML = '<span class="indicator-icon">✅</span><span class="indicator-text">Valid Aadhaar (Verhoeff Checksum Passed)</span>';
+    } else {
+      feedback.className = 'aadhaar-feedback invalid';
+      feedback.innerHTML = '<span class="indicator-icon">⚠️</span><span class="indicator-text">Invalid Aadhaar (Checksum failed - check digits)</span>';
+    }
+  }
+}
 
 // ------------------------------------------------------------
 //  INITIALIZATION & VIEW ROUTING
@@ -13,12 +90,25 @@ let cachedTransactions = [];
 
 document.addEventListener('DOMContentLoaded', () => {
   initApp();
+  initLocalDevBar();
+  registerServiceWorker();
 });
 
+function registerServiceWorker() {
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js').catch(err => {
+      console.warn('Service Worker registration skipped:', err);
+    });
+  }
+}
+
 function initApp() {
+  fetchHopperStock();
   const session = getSession();
   if (session && session.role === 'admin') {
     showAdminDashboard();
+  } else if (session && session.role === 'refill') {
+    showRefillPortal();
   } else if (session && session.role === 'user' && session.uid) {
     showUserPortal();
   } else {
@@ -53,6 +143,7 @@ function showAuthView() {
   document.getElementById('view-auth').classList.remove('hidden');
   document.getElementById('view-admin').classList.add('hidden');
   document.getElementById('view-user').classList.add('hidden');
+  document.getElementById('view-refill').classList.add('hidden');
   
   // Navbar state
   document.getElementById('nav-user-pill').style.display = 'none';
@@ -60,8 +151,8 @@ function showAuthView() {
   authBtn.textContent = 'Sign In';
   authBtn.className = 'btn btn-primary btn-sm';
   
-  // Health sync & load registered cards
   fetchHealthStatus();
+  fetchHopperStock();
   populateQuickPills();
 }
 
@@ -71,6 +162,7 @@ function showAdminDashboard() {
   document.getElementById('view-auth').classList.add('hidden');
   document.getElementById('view-admin').classList.remove('hidden');
   document.getElementById('view-user').classList.add('hidden');
+  document.getElementById('view-refill').classList.add('hidden');
   
   // Navbar state
   const userPill = document.getElementById('nav-user-pill');
@@ -95,6 +187,7 @@ function showUserPortal() {
   document.getElementById('view-auth').classList.add('hidden');
   document.getElementById('view-admin').classList.add('hidden');
   document.getElementById('view-user').classList.remove('hidden');
+  document.getElementById('view-refill').classList.add('hidden');
   
   // Navbar state
   const userPill = document.getElementById('nav-user-pill');
@@ -108,6 +201,34 @@ function showUserPortal() {
   
   loadUserProfile();
   pollInterval = setInterval(loadUserProfile, 8000);
+}
+
+function showRefillPortal() {
+  if (pollInterval) clearInterval(pollInterval);
+  
+  const session = getSession();
+  const staffName = session ? (session.name || 'Restock Staff') : 'Restock Staff';
+  
+  document.getElementById('view-auth').classList.add('hidden');
+  document.getElementById('view-admin').classList.add('hidden');
+  document.getElementById('view-user').classList.add('hidden');
+  document.getElementById('view-refill').classList.remove('hidden');
+  
+  // Navbar state
+  const userPill = document.getElementById('nav-user-pill');
+  userPill.style.display = 'flex';
+  document.getElementById('nav-user-avatar').textContent = 'R';
+  document.getElementById('nav-user-name').textContent = staffName;
+  
+  const authBtn = document.getElementById('btn-auth-action');
+  authBtn.textContent = 'Sign Out';
+  authBtn.className = 'btn btn-secondary btn-sm';
+  
+  const staffTitle = document.getElementById('refill-portal-staff-title');
+  if (staffTitle) staffTitle.textContent = staffName;
+  
+  fetchRefillStaffData();
+  pollInterval = setInterval(fetchRefillStaffData, 8000);
 }
 
 function handleAuthAction() {
@@ -127,9 +248,13 @@ function signOut() {
 
 function refreshCurrentView() {
   const session = getSession();
+  fetchHopperStock();
   if (session && session.role === 'admin') {
     fetchAdminDashboardData();
-    showToast('Admin data synchronized with MongoDB Atlas.', 'info');
+    showToast('Admin data synchronized.', 'info');
+  } else if (session && session.role === 'refill') {
+    fetchRefillStaffData();
+    showToast('Restock portal refreshed.', 'info');
   } else if (session && session.role === 'user') {
     loadUserProfile();
     showToast('Beneficiary quota refreshed.', 'info');
@@ -146,19 +271,28 @@ function refreshCurrentView() {
 function switchAuthTab(tab) {
   const adminBtn = document.getElementById('tab-btn-admin');
   const userBtn = document.getElementById('tab-btn-user');
+  const refillBtn = document.getElementById('tab-btn-refill');
+  
   const adminForm = document.getElementById('admin-login-form');
   const userForm = document.getElementById('user-login-form');
+  const refillForm = document.getElementById('refill-login-form');
+
+  adminBtn.classList.remove('active');
+  userBtn.classList.remove('active');
+  refillBtn.classList.remove('active');
+  adminForm.classList.add('hidden');
+  userForm.classList.add('hidden');
+  refillForm.classList.add('hidden');
 
   if (tab === 'admin') {
     adminBtn.classList.add('active');
-    userBtn.classList.remove('active');
     adminForm.classList.remove('hidden');
-    userForm.classList.add('hidden');
+  } else if (tab === 'refill') {
+    refillBtn.classList.add('active');
+    refillForm.classList.remove('hidden');
   } else {
     userBtn.classList.add('active');
-    adminBtn.classList.remove('active');
     userForm.classList.remove('hidden');
-    adminForm.classList.add('hidden');
   }
 }
 
@@ -215,6 +349,38 @@ async function handleAdminLogin(e) {
   } finally {
     btn.disabled = false;
     btn.innerHTML = `Sign In as Administrator <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>`;
+  }
+}
+
+async function handleRefillLogin(e) {
+  e.preventDefault();
+  const idInput = document.getElementById('refill-id').value.trim();
+  const passInput = document.getElementById('refill-password').value.trim();
+  const btn = document.getElementById('btn-refill-submit');
+
+  btn.disabled = true;
+  btn.innerHTML = 'Signing In...';
+
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role: 'refill', id: idInput, password: passInput })
+    });
+
+    const data = await res.json();
+    if (data.success) {
+      setSession({ role: 'refill', name: data.name || 'Restock Staff' });
+      showToast(data.message || 'Signed in to Restock Portal.', 'success');
+      showRefillPortal();
+    } else {
+      showToast(data.message || 'Invalid Restock Staff ID or Password.', 'error');
+    }
+  } catch (err) {
+    showToast('Network error contacting server.', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = `Sign In as Restock Staff <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>`;
   }
 }
 
@@ -284,7 +450,106 @@ function updateCloudStatusPill(isOnline) {
 }
 
 // ------------------------------------------------------------
-//  ADMIN MANAGEMENT DASHBOARD
+//  MACHINE HOPPER INVENTORY & LIVE STATUS
+// ------------------------------------------------------------
+
+async function fetchHopperStock() {
+  try {
+    const res = await fetch('/api/hopper', { cache: 'no-store' }).then(r => r.json());
+    if (res.success) {
+      cachedHopper = res;
+      renderHopperStock(res);
+    }
+  } catch (e) {
+    console.warn('Could not load hopper stock:', e);
+  }
+}
+
+function renderHopperStock(hopper) {
+  const stock = hopper.current_stock !== undefined ? hopper.current_stock : 50;
+  const cap = hopper.capacity || 60;
+  const isLow = stock <= 10;
+  const isEmpty = stock <= 0;
+
+  // Nav pill
+  const navText = document.getElementById('nav-hopper-text');
+  const navDot = document.getElementById('nav-hopper-dot');
+  if (navText && navDot) {
+    navText.textContent = `Hopper: ${stock} Pads`;
+    if (isEmpty) {
+      navDot.className = 'status-indicator-dot';
+      navDot.style.background = '#ef4444';
+    } else if (isLow) {
+      navDot.className = 'status-indicator-dot';
+      navDot.style.background = '#f59e0b';
+    } else {
+      navDot.className = 'status-indicator-dot online';
+      navDot.style.background = '#10b981';
+    }
+  }
+
+  // Admin metric card
+  const adminHopperCount = document.getElementById('stat-hopper-count');
+  const adminHopperBadge = document.getElementById('stat-hopper-badge');
+  if (adminHopperCount) adminHopperCount.textContent = stock;
+  if (adminHopperBadge) {
+    adminHopperBadge.textContent = `${stock} / ${cap} Pads`;
+  }
+
+  // Beneficiary machine strip
+  const userHopperLabel = document.getElementById('user-hopper-label');
+  const userHopperSub = document.getElementById('user-hopper-sub');
+  const userHopperBadge = document.getElementById('user-hopper-stock-badge');
+  const userHopperDot = document.getElementById('user-hopper-dot');
+
+  if (userHopperLabel) {
+    if (isEmpty) {
+      userHopperLabel.textContent = `MMMUT Center #01: 🔴 Hopper Empty — Refill Pending`;
+      if (userHopperSub) userHopperSub.textContent = 'Machine is currently being restocked by attendant.';
+      if (userHopperBadge) {
+        userHopperBadge.textContent = 'Empty';
+        userHopperBadge.className = 'badge badge-err';
+      }
+      if (userHopperDot) userHopperDot.style.background = '#ef4444';
+    } else if (isLow) {
+      userHopperLabel.textContent = `MMMUT Center #01: 🟠 Low Stock (${stock} Pads Remaining)`;
+      if (userHopperSub) userHopperSub.textContent = 'Machine has limited pads. Restock requested.';
+      if (userHopperBadge) {
+        userHopperBadge.textContent = `${stock} / ${cap} Low`;
+        userHopperBadge.className = 'badge badge-warn';
+      }
+      if (userHopperDot) userHopperDot.style.background = '#f59e0b';
+    } else {
+      userHopperLabel.textContent = `MMMUT Center #01: 🟢 ${stock} Pads in Stock — Dispenser Ready`;
+      if (userHopperSub) userHopperSub.textContent = 'Machine online • Ready to dispense on RFID tap';
+      if (userHopperBadge) {
+        userHopperBadge.textContent = `${stock} / ${cap} Ready`;
+        userHopperBadge.className = 'badge badge-emerald';
+      }
+      if (userHopperDot) userHopperDot.style.background = '#10b981';
+    }
+  }
+
+  // Refill Portal banner
+  const refillStockTitle = document.getElementById('refill-stock-title');
+  const refillStockBadge = document.getElementById('refill-stock-badge');
+  if (refillStockTitle) refillStockTitle.textContent = `Hopper: ${stock} / ${cap} Pads Remaining`;
+  if (refillStockBadge) {
+    if (isEmpty) {
+      refillStockBadge.textContent = 'Refill Urgent';
+      refillStockBadge.className = 'badge badge-err';
+    } else if (isLow) {
+      refillStockBadge.textContent = 'Stock Low';
+      refillStockBadge.className = 'badge badge-warn';
+    } else {
+      refillStockBadge.textContent = 'Stock OK';
+      refillStockBadge.className = 'badge badge-emerald';
+    }
+  }
+}
+
+// ------------------------------------------------------------
+//  ADMIN MANAGEMENT DASHBOARD & QUEUES
 // ------------------------------------------------------------
 
 async function fetchAdminDashboardData() {
@@ -301,6 +566,13 @@ async function fetchAdminDashboardData() {
     renderAdminStats(statsRes);
     renderAdminUsers(cachedUsers, statsRes.monthly_limit);
     renderAdminTransactions(cachedTransactions);
+
+    // Fetch new feature queues
+    fetchAdminRefillRequests();
+    fetchAdminRegistrationRequests();
+    fetchAdminEmergencyRequests();
+    fetchMonthlySummary();
+    fetchHopperStock();
   } catch (err) {
     console.error('Error fetching admin telemetry:', err);
   }
@@ -352,7 +624,8 @@ function handleUserSearch(query) {
   }
   const filtered = cachedUsers.filter(u => 
     (u.name && u.name.toLowerCase().includes(q)) || 
-    (u.rfid_uid && u.rfid_uid.toLowerCase().includes(q))
+    (u.rfid_uid && u.rfid_uid.toLowerCase().includes(q)) ||
+    (u.aadhaar_no && u.aadhaar_no.toLowerCase().includes(q))
   );
   renderAdminUsers(filtered);
 }
@@ -360,7 +633,7 @@ function handleUserSearch(query) {
 function renderAdminUsers(users, defaultLimit = 5) {
   const tbody = document.getElementById('users-tbody');
   if (!users || users.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">No beneficiaries match. Click "Add Beneficiary" to register a card.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">No beneficiaries match. Click "Add Beneficiary" to register a card.</td></tr>';
     return;
   }
 
@@ -375,9 +648,21 @@ function renderAdminUsers(users, defaultLimit = 5) {
       ? '<span class="badge badge-warn">Limit Reached</span>'
       : '<span class="badge badge-emerald">Active</span>';
 
+    // Masked Aadhaar display
+    let aadhaarDisplay = '<span class="text-muted">—</span>';
+    if (u.aadhaar_no) {
+      const clean = u.aadhaar_no.replace(/\D/g, '');
+      if (clean.length >= 4) {
+        aadhaarDisplay = `<code class="font-mono" style="font-size:11px;">XXXX XXXX ${clean.slice(-4)}</code>`;
+      } else {
+        aadhaarDisplay = `<code class="font-mono">${escapeHtml(u.aadhaar_no)}</code>`;
+      }
+    }
+
     return `
       <tr>
         <td><strong>${escapeHtml(u.name)}</strong></td>
+        <td>${aadhaarDisplay}</td>
         <td><code class="font-mono">${escapeHtml(u.rfid_uid)}</code></td>
         <td>
           <div style="font-size:12px; font-weight:600">${used} / ${limit} pads</div>
@@ -389,7 +674,7 @@ function renderAdminUsers(users, defaultLimit = 5) {
         <td>${statusBadge}</td>
         <td class="text-right">
           <div class="action-btn-group">
-            <button class="btn-table-action" onclick="openEditUserModal('${escapeHtml(u.rfid_uid)}', '${escapeHtml(u.name)}', ${limit})" title="Edit Name or Monthly Quota">Edit</button>
+            <button class="btn-table-action" onclick="openEditUserModal('${escapeHtml(u.rfid_uid)}', '${escapeHtml(u.name)}', ${limit}, '${escapeHtml(u.aadhaar_no || '')}')" title="Edit Name or Monthly Quota">Edit</button>
             <button class="btn-table-action" onclick="resetSingleUser('${escapeHtml(u.rfid_uid)}')" title="Reset used pads to 0">Reset</button>
             <button class="btn-table-action btn-del" onclick="deleteUser('${escapeHtml(u.rfid_uid)}', '${escapeHtml(u.name)}')" title="Delete Card">Delete</button>
           </div>
@@ -457,6 +742,639 @@ function exportTransactionsCSV() {
 }
 
 // ------------------------------------------------------------
+//  ADMIN QUEUES: REFILL PROOFS, ALLOTMENTS & EMERGENCY REQUESTS
+// ------------------------------------------------------------
+
+async function fetchAdminRefillRequests() {
+  try {
+    const listEl = document.getElementById('admin-refill-requests-list');
+    const badgeEl = document.getElementById('badge-pending-refills-count');
+    if (!listEl) return;
+
+    const res = await fetch('/api/admin/refills', { cache: 'no-store' }).then(r => r.json());
+    const refills = res.refills || [];
+    const pending = refills.filter(r => r.status === 'PENDING_VERIFICATION');
+
+    if (badgeEl) badgeEl.textContent = pending.length;
+
+    if (pending.length === 0) {
+      listEl.innerHTML = '<div class="text-center text-muted py-3">No pending refill logs to verify</div>';
+      return;
+    }
+
+    listEl.innerHTML = pending.map(r => {
+      const photos = [];
+      if (r.photo_hopper_base64) photos.push({ src: r.photo_hopper_base64, label: 'Hopper Proof' });
+      if (r.photo_tray_base64) photos.push({ src: r.photo_tray_base64, label: 'Tray Proof' });
+
+      const thumbsHtml = photos.map(p => `
+        <img src="${p.src}" class="proof-thumb" alt="${p.label}" title="Click to view full image" onclick="openImageLightbox('${p.src}', '${escapeHtml(r.staff_name)} - ${p.label}')">
+      `).join('');
+
+      return `
+        <div class="queue-item">
+          <div class="queue-item-header">
+            <strong>${escapeHtml(r.staff_name)}</strong>
+            <span class="badge badge-warn">+${r.quantity_added} Pads</span>
+          </div>
+          <div class="queue-item-meta">
+            <span>Remarks: "${escapeHtml(r.remarks || 'Hopper replenishment')}"</span>
+            <span>Submitted: ${escapeHtml(r.timestamp || '')}</span>
+          </div>
+          ${thumbsHtml ? `<div class="queue-thumbs-row">${thumbsHtml}</div>` : ''}
+          <div class="queue-actions-row">
+            <button class="btn btn-primary btn-sm" onclick="handleVerifyRefill('${r.id}', 'approve')">
+              ✓ Verify & Update Stock
+            </button>
+            <button class="btn btn-danger-subtle btn-sm" onclick="handleVerifyRefill('${r.id}', 'reject')">
+              ✕ Reject
+            </button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch (err) {
+    console.warn('Could not load refill queue:', err);
+  }
+}
+
+async function handleVerifyRefill(refillId, action) {
+  try {
+    const res = await fetch(`/api/admin/refills/${encodeURIComponent(refillId)}/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: action })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast(data.message, 'success');
+      fetchAdminRefillRequests();
+      fetchHopperStock();
+      fetchAdminDashboardData();
+    } else {
+      showToast(data.message || 'Failed to update refill log', 'error');
+    }
+  } catch (e) {
+    showToast('Network error updating refill log', 'error');
+  }
+}
+
+async function fetchAdminRegistrationRequests() {
+  try {
+    const listEl = document.getElementById('admin-allotments-requests-list');
+    const badgeEl = document.getElementById('badge-pending-allotments-count');
+    if (!listEl) return;
+
+    const res = await fetch('/api/admin/registration-requests', { cache: 'no-store' }).then(r => r.json());
+    const requests = res.requests || [];
+    const pending = requests.filter(r => r.status === 'OTP_VERIFIED');
+
+    if (badgeEl) badgeEl.textContent = pending.length;
+
+    if (pending.length === 0) {
+      listEl.innerHTML = '<div class="text-center text-muted py-3">No students awaiting card allotment</div>';
+      return;
+    }
+
+    listEl.innerHTML = pending.map(req => {
+      const maskedAadhaar = req.aadhaar_no ? `XXXX XXXX ${req.aadhaar_no.replace(/\D/g, '').slice(-4)}` : 'Verified';
+      return `
+        <div class="queue-item">
+          <div class="queue-item-header">
+            <strong>${escapeHtml(req.name)}</strong>
+            <span class="badge badge-emerald">Aadhaar Verified</span>
+          </div>
+          <div class="queue-item-meta">
+            <span>Aadhaar: <code class="font-mono">${maskedAadhaar}</code></span>
+            <span>Email: ${escapeHtml(req.email || '')}</span>
+            <span>Dept: ${escapeHtml(req.department || '')}</span>
+          </div>
+          <div class="queue-actions-row">
+            <button class="btn btn-primary btn-sm" onclick="openAllotModal('${req.id}', '${escapeHtml(req.name)}', '${maskedAadhaar}', '${escapeHtml(req.email || '')}', '${escapeHtml(req.department || '')}')">
+              💳 Allot RFID Card
+            </button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch (err) {
+    console.warn('Could not load allotments queue:', err);
+  }
+}
+
+function openAllotModal(reqId, name, aadhaar, email, dept) {
+  document.getElementById('allot-req-id').value = reqId;
+  const summary = document.getElementById('allot-summary-box');
+  summary.innerHTML = `
+    <strong>Student: ${escapeHtml(name)}</strong>
+    <span>Aadhaar: <code class="font-mono">${escapeHtml(aadhaar)}</code></span>
+    <span>Email: ${escapeHtml(email)} • ${escapeHtml(dept)}</span>
+  `;
+  document.getElementById('allot-uid').value = '';
+  document.getElementById('allot-limit').value = 5;
+  document.getElementById('allot-modal').classList.remove('hidden');
+}
+
+function closeAllotModal() {
+  document.getElementById('allot-modal').classList.add('hidden');
+}
+
+async function handleAllotSubmit(e) {
+  e.preventDefault();
+  const reqId = document.getElementById('allot-req-id').value;
+  const uid = document.getElementById('allot-uid').value.trim().toUpperCase();
+  const limit = parseInt(document.getElementById('allot-limit').value, 10) || 5;
+
+  if (!uid) {
+    showToast('Please enter or tap an RFID UID.', 'error');
+    return;
+  }
+
+  try {
+    const res = await fetch(`/api/admin/registration-requests/${encodeURIComponent(reqId)}/allot`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rfid_uid: uid, monthly_limit: limit })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast(data.message, 'success');
+      closeAllotModal();
+      fetchAdminRegistrationRequests();
+      fetchAdminDashboardData();
+    } else {
+      showToast(data.message || 'Failed to allot card', 'error');
+    }
+  } catch (err) {
+    showToast('Network error allotting card', 'error');
+  }
+}
+
+async function fetchAdminEmergencyRequests() {
+  try {
+    const listEl = document.getElementById('admin-emergency-requests-list');
+    const badgeEl = document.getElementById('badge-emergency-requests-count');
+    if (!listEl) return;
+
+    const res = await fetch('/api/admin/emergency-requests', { cache: 'no-store' }).then(r => r.json());
+    const requests = res.requests || [];
+    const pending = requests.filter(r => r.status === 'PENDING');
+
+    if (badgeEl) badgeEl.textContent = pending.length;
+
+    if (pending.length === 0) {
+      listEl.innerHTML = '<div class="text-center text-muted py-3">No emergency requests active</div>';
+      return;
+    }
+
+    listEl.innerHTML = pending.map(req => {
+      return `
+        <div class="queue-item">
+          <div class="queue-item-header">
+            <strong>${escapeHtml(req.user_name || 'Beneficiary')}</strong>
+            <span class="badge badge-warn">🚨 Emergency</span>
+          </div>
+          <div class="queue-item-meta">
+            <span>Card UID: <code class="font-mono">${escapeHtml(req.rfid_uid)}</code></span>
+            <span>Reason: "${escapeHtml(req.reason || 'Unexpected emergency flow')}"</span>
+            <span>Requested: ${escapeHtml(req.timestamp || '')}</span>
+          </div>
+          <div class="queue-actions-row">
+            <button class="btn btn-primary btn-sm" onclick="handleEmergencyAction('${req.id}', 'grant', 1)">
+              Grant +1 Pad
+            </button>
+            <button class="btn btn-primary btn-sm" onclick="handleEmergencyAction('${req.id}', 'grant', 2)">
+              Grant +2 Pads
+            </button>
+            <button class="btn btn-danger-subtle btn-sm" onclick="handleEmergencyAction('${req.id}', 'reject', 0)">
+              Dismiss
+            </button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch (err) {
+    console.warn('Could not load emergency queue:', err);
+  }
+}
+
+async function handleEmergencyAction(reqId, action, extraPads) {
+  try {
+    const res = await fetch(`/api/admin/emergency-requests/${encodeURIComponent(reqId)}/action`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: action, extra_pads: extraPads })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast(data.message, 'success');
+      fetchAdminEmergencyRequests();
+      fetchAdminDashboardData();
+    } else {
+      showToast(data.message || 'Operation failed', 'error');
+    }
+  } catch (e) {
+    showToast('Network error handling emergency request', 'error');
+  }
+}
+
+// ------------------------------------------------------------
+//  MONTHLY SUMMARY & SIMULATED ROLLOVER
+// ------------------------------------------------------------
+
+async function fetchMonthlySummary() {
+  try {
+    const res = await fetch('/api/dashboard/monthly-summary', { cache: 'no-store' }).then(r => r.json());
+    if (!res.success) return;
+
+    const badge = document.getElementById('current-month-badge');
+    if (badge) {
+      badge.textContent = `Month ${res.current_month} — ${res.current_month_name} ${res.current_year}`;
+    }
+
+    const summaries = res.monthly_summary || [];
+    const current = summaries.find(s => s.month_no === res.current_month) || summaries[0] || {};
+
+    const curDisp = document.getElementById('month-stat-current-dispensed');
+    const curUsers = document.getElementById('month-stat-unique-users');
+    const avgQty = document.getElementById('month-stat-avg-qty');
+
+    if (curDisp) curDisp.textContent = `${current.total_dispensed || 0} pads`;
+    if (curUsers) curUsers.textContent = current.unique_beneficiaries || 0;
+    if (avgQty) {
+      const avg = current.total_transactions > 0 ? (current.total_dispensed / current.total_transactions).toFixed(1) : '1.0';
+      avgQty.textContent = avg;
+    }
+
+    const tbody = document.getElementById('monthly-summary-tbody');
+    if (tbody) {
+      if (summaries.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">No monthly records accumulated yet</td></tr>';
+      } else {
+        tbody.innerHTML = summaries.map(s => `
+          <tr>
+            <td><strong>Month ${s.month_no}</strong></td>
+            <td>${escapeHtml(s.month_name)} ${s.year}</td>
+            <td><strong class="text-emerald">${s.total_dispensed}</strong> pads</td>
+            <td>${s.total_transactions} txns</td>
+            <td>${s.unique_beneficiaries} beneficiaries</td>
+          </tr>
+        `).join('');
+      }
+    }
+  } catch (e) {
+    console.warn('Could not load monthly summary:', e);
+  }
+}
+
+async function confirmSimulateMonthRollover() {
+  if (!confirm('Simulate New Month Rollover (For Testing)?\n\nThis will:\n1. Archive the current month dispense statistics\n2. Increment the month number\n3. Reset all beneficiaries used pads to 0\n\nAre you sure you want to proceed?')) {
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/admin/simulate-month-rollover', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast(data.message, 'success');
+      fetchMonthlySummary();
+      fetchAdminDashboardData();
+    } else {
+      showToast(data.message || 'Rollover simulation failed', 'error');
+    }
+  } catch (e) {
+    showToast('Network error during rollover simulation', 'error');
+  }
+}
+
+// ------------------------------------------------------------
+//  STUDENT REGISTRATION WITH AADHAAR & OTP
+// ------------------------------------------------------------
+
+function openRegisterModal() {
+  document.getElementById('reg-step1-form').reset();
+  document.getElementById('reg-step2-form').reset();
+  document.getElementById('reg-step1-form').classList.remove('hidden');
+  document.getElementById('reg-step2-form').classList.add('hidden');
+  const feedback = document.getElementById('aadhaar-feedback');
+  if (feedback) {
+    feedback.className = 'aadhaar-feedback';
+    feedback.innerHTML = '<span class="indicator-icon">ℹ️</span><span class="indicator-text">Enter 12 digits to verify checksum</span>';
+  }
+  document.getElementById('register-modal').classList.remove('hidden');
+}
+
+function closeRegisterModal() {
+  document.getElementById('register-modal').classList.add('hidden');
+}
+
+function backToRegStep1() {
+  document.getElementById('reg-step2-form').classList.add('hidden');
+  document.getElementById('reg-step1-form').classList.remove('hidden');
+}
+
+async function handleSendRegistrationOTP(e) {
+  e.preventDefault();
+  const name = document.getElementById('reg-name').value.trim();
+  const aadhaarRaw = document.getElementById('reg-aadhaar').value.replace(/\D/g, '');
+  const email = document.getElementById('reg-email').value.trim();
+  const dept = document.getElementById('reg-dept').value.trim();
+  const btn = document.getElementById('btn-reg-step1');
+
+  if (!validateVerhoeff(aadhaarRaw)) {
+    showToast('Invalid 12-digit Aadhaar number checksum. Please verify digits.', 'error');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Generating OTP...';
+
+  try {
+    const res = await fetch('/api/auth/register-request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: name,
+        aadhaar_no: aadhaarRaw,
+        email: email,
+        department: dept
+      })
+    });
+    const data = await res.json();
+    if (data.success) {
+      tempRegistrationId = data.request_id;
+      showToast(data.message, 'success');
+      
+      // If dev OTP provided in response, show immediate dev helper
+      if (data.dev_otp) {
+        showToast(`[DEV MODE] Verification OTP: ${data.dev_otp}`, 'info');
+        const otpInput = document.getElementById('reg-otp-input');
+        if (otpInput) otpInput.value = data.dev_otp;
+      }
+
+      document.getElementById('otp-destination-text').textContent = `Verification code sent to ${email}`;
+      document.getElementById('reg-step1-form').classList.add('hidden');
+      document.getElementById('reg-step2-form').classList.remove('hidden');
+    } else {
+      showToast(data.message || 'Could not generate OTP', 'error');
+    }
+  } catch (err) {
+    showToast('Network error generating registration OTP', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Generate Verification OTP →';
+  }
+}
+
+async function handleVerifyRegistrationOTP(e) {
+  e.preventDefault();
+  const otp = document.getElementById('reg-otp-input').value.trim();
+  const btn = document.getElementById('btn-reg-verify');
+
+  if (!tempRegistrationId) {
+    showToast('Registration session expired. Please retry.', 'error');
+    backToRegStep1();
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Verifying...';
+
+  try {
+    const res = await fetch('/api/auth/verify-registration-otp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        request_id: tempRegistrationId,
+        otp: otp
+      })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast('Registration Verified! An administrator will allot your card shortly.', 'success');
+      closeRegisterModal();
+    } else {
+      showToast(data.message || 'Invalid or expired OTP', 'error');
+    }
+  } catch (err) {
+    showToast('Network error verifying registration OTP', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Verify & Queue for Card Allotment';
+  }
+}
+
+// ------------------------------------------------------------
+//  RESTOCK / REFILL STAFF PORTAL
+// ------------------------------------------------------------
+
+function handlePhotoSelect(event, photoIndex) {
+  const file = event.target.files && event.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const base64Data = e.target.result;
+    if (photoIndex === 1) {
+      refillPhoto1Base64 = base64Data;
+      document.getElementById('photo1-empty').classList.add('hidden');
+      document.getElementById('photo1-preview-wrap').classList.remove('hidden');
+      document.getElementById('photo1-preview-img').src = base64Data;
+    } else {
+      refillPhoto2Base64 = base64Data;
+      document.getElementById('photo2-empty').classList.add('hidden');
+      document.getElementById('photo2-preview-wrap').classList.remove('hidden');
+      document.getElementById('photo2-preview-img').src = base64Data;
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
+function removePhoto(photoIndex) {
+  if (photoIndex === 1) {
+    refillPhoto1Base64 = '';
+    document.getElementById('refill-photo1-file').value = '';
+    document.getElementById('photo1-empty').classList.remove('hidden');
+    document.getElementById('photo1-preview-wrap').classList.add('hidden');
+  } else {
+    refillPhoto2Base64 = '';
+    document.getElementById('refill-photo2-file').value = '';
+    document.getElementById('photo2-empty').classList.remove('hidden');
+    document.getElementById('photo2-preview-wrap').classList.add('hidden');
+  }
+}
+
+async function handleRefillSubmit(e) {
+  e.preventDefault();
+  const name = document.getElementById('refill-staff-name').value.trim();
+  const qty = parseInt(document.getElementById('refill-quantity-added').value, 10) || 50;
+  const remarks = document.getElementById('refill-remarks').value.trim();
+  const btn = document.getElementById('btn-submit-refill');
+
+  if (!refillPhoto1Base64) {
+    showToast('Please upload Proof Photo 1 (Hopper interior with pads).', 'error');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.innerHTML = 'Uploading Proof...';
+
+  try {
+    const res = await fetch('/api/refill/submit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        staff_name: name,
+        quantity_added: qty,
+        remarks: remarks,
+        photo_hopper_base64: refillPhoto1Base64,
+        photo_tray_base64: refillPhoto2Base64
+      })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast(data.message, 'success');
+      document.getElementById('refill-submit-form').reset();
+      removePhoto(1);
+      removePhoto(2);
+      fetchRefillStaffData();
+    } else {
+      showToast(data.message || 'Failed to submit restock report', 'error');
+    }
+  } catch (err) {
+    showToast('Network error submitting restock report', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = `Submit Restock for Admin Approval <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>`;
+  }
+}
+
+async function fetchRefillStaffData() {
+  fetchHopperStock();
+  const listEl = document.getElementById('refill-staff-logs-list');
+  if (!listEl) return;
+
+  try {
+    const res = await fetch('/api/admin/refills', { cache: 'no-store' }).then(r => r.json());
+    const logs = res.refills || [];
+    if (logs.length === 0) {
+      listEl.innerHTML = '<div class="text-center text-muted py-4">No replenishment reports submitted yet.</div>';
+      return;
+    }
+
+    listEl.innerHTML = logs.slice(0, 10).map(l => {
+      let badgeClass = 'badge-warn';
+      let statusText = 'Pending Verification';
+      if (l.status === 'APPROVED') {
+        badgeClass = 'badge-emerald';
+        statusText = 'Verified & Credited';
+      } else if (l.status === 'REJECTED') {
+        badgeClass = 'badge-err';
+        statusText = 'Rejected';
+      }
+
+      const thumbs = [];
+      if (l.photo_hopper_base64) thumbs.push({ src: l.photo_hopper_base64, label: 'Hopper Proof' });
+      if (l.photo_tray_base64) thumbs.push({ src: l.photo_tray_base64, label: 'Tray Proof' });
+
+      const thumbsHtml = thumbs.map(t => `
+        <img src="${t.src}" class="proof-thumb" alt="${t.label}" onclick="openImageLightbox('${t.src}', '${escapeHtml(l.staff_name)} - ${t.label}')">
+      `).join('');
+
+      return `
+        <div class="refill-log-item">
+          <div class="refill-log-top">
+            <strong>+${l.quantity_added} Pads (${escapeHtml(l.staff_name)})</strong>
+            <span class="badge ${badgeClass}">${statusText}</span>
+          </div>
+          <div style="font-size: 11px; color: var(--text-dim);">
+            <span>Remarks: "${escapeHtml(l.remarks || 'Restocked')}"</span> • <span>${escapeHtml(l.timestamp || '')}</span>
+          </div>
+          ${thumbsHtml ? `<div class="queue-thumbs-row">${thumbsHtml}</div>` : ''}
+        </div>
+      `;
+    }).join('');
+  } catch (e) {
+    console.warn('Could not load refill staff logs:', e);
+  }
+}
+
+// ------------------------------------------------------------
+//  BENEFICIARY EMERGENCY PAD REQUESTS
+// ------------------------------------------------------------
+
+function openEmergencyModal() {
+  document.getElementById('emergency-form').reset();
+  document.getElementById('emergency-modal').classList.remove('hidden');
+}
+
+function closeEmergencyModal() {
+  document.getElementById('emergency-modal').classList.add('hidden');
+}
+
+async function handleEmergencySubmit(e) {
+  e.preventDefault();
+  const session = getSession();
+  if (!session || !session.uid) {
+    showToast('Please log in with your beneficiary card first.', 'error');
+    return;
+  }
+
+  const reason = document.getElementById('emergency-reason').value.trim();
+  const btn = document.getElementById('btn-emergency-submit');
+
+  btn.disabled = true;
+  btn.textContent = 'Submitting...';
+
+  try {
+    const res = await fetch('/api/user/emergency-request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        rfid_uid: session.uid,
+        user_name: session.name,
+        reason: reason
+      })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast(data.message, 'success');
+      closeEmergencyModal();
+    } else {
+      showToast(data.message || 'Failed to submit emergency request', 'error');
+    }
+  } catch (err) {
+    showToast('Network error submitting emergency request', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Submit Emergency Request';
+  }
+}
+
+// ------------------------------------------------------------
+//  LIGHTBOX IMAGE PREVIEW
+// ------------------------------------------------------------
+
+function openImageLightbox(src, caption) {
+  const modal = document.getElementById('image-lightbox-modal');
+  const img = document.getElementById('lightbox-img');
+  const cap = document.getElementById('lightbox-caption');
+  if (!modal || !img) return;
+
+  img.src = src;
+  if (cap) cap.textContent = caption || 'Restock Proof Photo';
+  modal.classList.remove('hidden');
+}
+
+function closeImageLightbox(event) {
+  const modal = document.getElementById('image-lightbox-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+// ------------------------------------------------------------
 //  BENEFICIARY MANAGEMENT (ADD, EDIT, DELETE, RESET)
 // ------------------------------------------------------------
 
@@ -471,10 +1389,16 @@ function openAddUserModal() {
   uidInput.classList.remove('readonly-input');
   document.getElementById('form-uid-hint').textContent = 'Format: 8-10 hex characters (colons optional)';
   
+  const feedback = document.getElementById('form-aadhaar-feedback');
+  if (feedback) {
+    feedback.className = 'aadhaar-feedback';
+    feedback.innerHTML = '<span class="indicator-icon">ℹ️</span><span class="indicator-text">Verhoeff checksum checked on entry</span>';
+  }
+
   document.getElementById('user-modal').classList.remove('hidden');
 }
 
-function openEditUserModal(uid, name, limit) {
+function openEditUserModal(uid, name, limit, aadhaar) {
   document.getElementById('form-is-edit').value = '1';
   document.getElementById('modal-title').textContent = `Edit Beneficiary (${uid})`;
   document.getElementById('btn-modal-save').textContent = 'Save Changes';
@@ -485,6 +1409,12 @@ function openEditUserModal(uid, name, limit) {
   uidInput.readOnly = true;
   document.getElementById('form-uid-hint').textContent = 'Card UID cannot be changed while editing.';
   document.getElementById('form-limit').value = limit || 5;
+
+  const aadhaarInput = document.getElementById('form-aadhaar');
+  if (aadhaarInput) {
+    aadhaarInput.value = aadhaar || '';
+    formatAndValidateAadhaar(aadhaarInput, 'form-aadhaar-feedback');
+  }
 
   document.getElementById('user-modal').classList.remove('hidden');
 }
@@ -499,6 +1429,12 @@ async function handleUserSubmit(e) {
   const name = document.getElementById('form-name').value.trim();
   const uid = document.getElementById('form-uid').value.trim().toUpperCase();
   const limit = parseInt(document.getElementById('form-limit').value, 10);
+  const aadhaar = document.getElementById('form-aadhaar') ? document.getElementById('form-aadhaar').value.replace(/\D/g, '') : '';
+
+  if (aadhaar && aadhaar.length === 12 && !validateVerhoeff(aadhaar)) {
+    showToast('Invalid Aadhaar number (Verhoeff checksum failed)', 'error');
+    return;
+  }
 
   try {
     let res;
@@ -506,13 +1442,13 @@ async function handleUserSubmit(e) {
       res = await fetch(`/api/users/${encodeURIComponent(uid)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name, monthly_limit: limit })
+        body: JSON.stringify({ name: name, monthly_limit: limit, aadhaar_no: aadhaar })
       });
     } else {
       res = await fetch('/api/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rfid_uid: uid, name: name, monthly_limit: limit })
+        body: JSON.stringify({ rfid_uid: uid, name: name, monthly_limit: limit, aadhaar_no: aadhaar })
       });
     }
 
@@ -592,6 +1528,8 @@ async function loadUserProfile() {
   const session = getSession();
   if (!session || !session.uid) return;
 
+  fetchHopperStock();
+
   try {
     const [profileRes, txRes] = await Promise.all([
       fetch(`/api/user/${encodeURIComponent(session.uid)}`, { cache: 'no-store' }).then(r => r.json()),
@@ -605,7 +1543,9 @@ async function loadUserProfile() {
         name: profileRes.user.name
       });
       renderUserProfile(profileRes.user);
-      updateCycleTracker(profileRes.user.cycle_data, profileRes.user.remaining);
+      if (profileRes.user.cycle_data) {
+        updateCycleTracker(profileRes.user.cycle_data, profileRes.user.remaining);
+      }
     }
     renderUserTransactions(txRes || []);
   } catch (err) {
@@ -625,6 +1565,16 @@ function renderUserProfile(u) {
   document.getElementById('user-profile-avatar').textContent = name.charAt(0).toUpperCase();
   document.getElementById('user-profile-uid').textContent = u.rfid_uid;
 
+  const aadhaarWrap = document.getElementById('user-profile-aadhaar-wrap');
+  const aadhaarEl = document.getElementById('user-profile-aadhaar');
+  if (u.aadhaar_no && aadhaarWrap && aadhaarEl) {
+    const clean = u.aadhaar_no.replace(/\D/g, '');
+    aadhaarEl.textContent = `XXXX XXXX ${clean.slice(-4)}`;
+    aadhaarWrap.style.display = 'inline';
+  } else if (aadhaarWrap) {
+    aadhaarWrap.style.display = 'none';
+  }
+
   const statusBadge = document.getElementById('user-profile-status');
   if (isExhausted) {
     statusBadge.textContent = 'Quota Reached';
@@ -634,8 +1584,7 @@ function renderUserProfile(u) {
     statusBadge.className = 'badge badge-emerald';
   }
 
-  // Quota circular ring calculation
-  // Total circumference for r=50 is ~314.15
+  // Quota circular ring calculation (r=50 -> circum = ~314.15)
   const circumference = 314.15;
   const fraction = Math.min(Math.max(remaining / limit, 0), 1);
   const offset = circumference * (1 - fraction);
@@ -666,6 +1615,16 @@ function renderUserProfile(u) {
 
   document.getElementById('user-progress-text').textContent = `${used} of ${limit} Collected`;
   document.getElementById('user-max-label').textContent = `${limit} pads`;
+
+  // Emergency banner visibility
+  const emergBanner = document.getElementById('user-emergency-banner');
+  if (emergBanner) {
+    if (isExhausted) {
+      emergBanner.style.display = 'flex';
+    } else {
+      emergBanner.style.display = 'flex'; // Keep accessible so students in urgent need can request extra pads anytime
+    }
+  }
 }
 
 function renderUserTransactions(txs) {
@@ -717,7 +1676,7 @@ function showToast(message, type = 'info') {
     toast.style.opacity = '0';
     toast.style.transform = 'translateY(10px)';
     setTimeout(() => toast.remove(), 300);
-  }, 3800);
+  }, 4200);
 }
 
 function escapeHtml(str) {
@@ -745,158 +1704,109 @@ function updateCycleTracker(cycleData, remainingPads) {
     currentUserCycleData = cycleData;
   }
 
-  // Calculate default date if none provided (14 days ago for mid-cycle demo)
   const today = new Date();
   let defaultDateStr = new Date(today.getTime() - 12 * 86400000).toISOString().slice(0, 10);
+  let cycleLength = 28;
+  let periodDuration = 5;
+  let lastPeriodDateStr = defaultDateStr;
 
-  const lastDateStr = (currentUserCycleData && currentUserCycleData.last_period_date)
-    ? currentUserCycleData.last_period_date
-    : defaultDateStr;
+  if (currentUserCycleData && currentUserCycleData.last_period_date) {
+    lastPeriodDateStr = currentUserCycleData.last_period_date;
+    cycleLength = currentUserCycleData.cycle_length || 28;
+    periodDuration = currentUserCycleData.period_duration || 5;
+  }
 
-  const cycleLen = (currentUserCycleData && currentUserCycleData.cycle_length)
-    ? parseInt(currentUserCycleData.cycle_length, 10)
-    : 28;
+  const lastDateInput = document.getElementById('cycle-last-date');
+  if (lastDateInput && !lastDateInput.value) {
+    lastDateInput.value = lastPeriodDateStr;
+  }
+  const cycleLenInput = document.getElementById('cycle-length-input');
+  if (cycleLenInput) cycleLenInput.value = cycleLength;
+  const periodDurInput = document.getElementById('period-duration-input');
+  if (periodDurInput) periodDurInput.value = periodDuration;
 
-  const periodDur = (currentUserCycleData && currentUserCycleData.period_duration)
-    ? parseInt(currentUserCycleData.period_duration, 10)
-    : 5;
+  const lastPeriodDate = new Date(lastPeriodDateStr + 'T00:00:00');
+  const todayClean = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const diffDays = Math.floor((todayClean - lastPeriodDate) / 86400000);
+  const currentDayInCycle = ((diffDays % cycleLength) + cycleLength) % cycleLength + 1;
 
-  // Set input values
-  const dateInput = document.getElementById('cycle-last-date');
-  const lenInput = document.getElementById('cycle-length-input');
-  const durInput = document.getElementById('period-duration-input');
+  let phaseName = 'Follicular Phase';
+  let phaseColor = '#34d399';
+  let phaseTitle = 'Follicular Phase (Days 6–13)';
+  let phaseDesc = 'Estrogen rises, prepping your body. Energy levels generally elevate.';
 
-  if (dateInput) dateInput.value = lastDateStr;
-  if (lenInput) lenInput.value = cycleLen;
-  if (durInput) durInput.value = periodDur;
-
-  // Day calculation
-  const [sy, sm, sd] = lastDateStr.split('-').map(Number);
-  const startDate = new Date(sy, sm - 1, sd);
-  const nowOnlyDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  
-  let diffDays = Math.floor((nowOnlyDate - startDate) / (1000 * 60 * 60 * 24));
-  if (diffDays < 0) diffDays = 0;
-
-  const cycleDay = (diffDays % cycleLen) + 1;
-  const daysUntilNext = cycleLen - (cycleDay - 1);
-  const isPeriodActive = cycleDay <= periodDur;
-
-  // Phase categorization
-  let phaseName = 'Menstrual Phase';
-  let phaseColor = '#f43f5e';
-  let badgeClass = 'badge badge-err';
-  let phaseTitle = 'Menstrual Phase (Active Flow)';
-  let phaseDesc = 'Uterine lining is shedding. Prioritize gentle rest, warmth, adequate hydration, and change sanitary pads every 4 to 6 hours.';
-
-  if (isPeriodActive) {
-    phaseName = `Menstrual Phase (Day ${cycleDay})`;
+  if (currentDayInCycle <= periodDuration) {
+    phaseName = 'Menstrual Phase';
     phaseColor = '#f43f5e';
-    badgeClass = 'badge badge-err';
-    phaseTitle = `Menstrual Phase (Day ${cycleDay} of ${periodDur})`;
-    phaseDesc = 'Active menstrual flow. Stay clean, comfortable, and ensure you have sufficient pads from the HygieNet dispenser.';
-  } else if (cycleDay <= Math.floor(cycleLen * 0.46)) {
-    phaseName = 'Follicular Phase';
-    phaseColor = '#10b981';
-    badgeClass = 'badge badge-emerald';
-    phaseTitle = 'Follicular Phase (Renewal)';
-    phaseDesc = 'Follicle-stimulating hormone is elevating estrogen levels. Physical stamina, mood, and cognitive clarity are generally highest.';
-  } else if (cycleDay <= Math.floor(cycleLen * 0.58)) {
+    phaseTitle = 'Menstrual Phase (Days 1–5)';
+    phaseDesc = 'Uterine lining sheds. Stay hydrated and have clean pads ready.';
+  } else if (currentDayInCycle >= 14 && currentDayInCycle <= 16) {
     phaseName = 'Ovulation Phase';
-    phaseColor = '#8b5cf6';
-    badgeClass = 'badge badge-cyan';
-    phaseTitle = 'Ovulation Phase (Peak Vitality)';
-    phaseDesc = 'A mature egg is released from the ovary. Hormonal vitality and body temperature peak during this window.';
-  } else {
+    phaseColor = '#38bdf8';
+    phaseTitle = 'Ovulation Phase (Days 14–16)';
+    phaseDesc = 'Peak fertility window with highest energy levels.';
+  } else if (currentDayInCycle > 16) {
     phaseName = 'Luteal Phase';
-    phaseColor = '#f59e0b';
-    badgeClass = 'badge badge-warn';
-    phaseTitle = 'Luteal Phase (PMS & Pad Readiness)';
-    phaseDesc = 'Progesterone dominance prepares for your next cycle. Mild PMS or fatigue may occur. Excellent time to collect pads from the machine!';
+    phaseColor = '#a78bfa';
+    phaseTitle = 'Luteal Phase (Days 17–28)';
+    phaseDesc = 'Progesterone peaks. Mild PMS symptoms may begin.';
   }
 
-  // Update circular gauge
-  const circumference = 427.26; // 2 * PI * 68
-  const fraction = Math.min(Math.max(cycleDay / cycleLen, 0.03), 1);
-  const offset = circumference * (1 - fraction);
-
-  const gaugeFill = document.getElementById('cycle-gauge-fill');
-  if (gaugeFill) {
-    gaugeFill.style.strokeDashoffset = offset;
-    gaugeFill.style.stroke = phaseColor;
-  }
-
-  // Text Elements
   const dayNumEl = document.getElementById('cycle-day-num');
-  if (dayNumEl) dayNumEl.textContent = `Day ${cycleDay}`;
+  if (dayNumEl) dayNumEl.textContent = `Day ${currentDayInCycle}`;
+  const dayLblEl = document.getElementById('cycle-day-label');
+  if (dayLblEl) dayLblEl.textContent = `of ${cycleLength} Day Cycle`;
 
-  const dayLabelEl = document.getElementById('cycle-day-label');
-  if (dayLabelEl) dayLabelEl.textContent = `of ${cycleLen} Day Cycle`;
-
-  const countTextEl = document.getElementById('cycle-countdown-text');
-  if (countTextEl) {
-    if (isPeriodActive) {
-      countTextEl.textContent = '🩸 Period in Progress';
-      countTextEl.style.color = '#f43f5e';
-    } else if (daysUntilNext === 0 || daysUntilNext === cycleLen) {
-      countTextEl.textContent = '🩸 Period Due Today';
-      countTextEl.style.color = '#f43f5e';
-    } else {
-      countTextEl.textContent = `Starts in ${daysUntilNext} day${daysUntilNext === 1 ? '' : 's'}`;
-      countTextEl.style.color = '#38bdf8';
-    }
+  const daysUntilNext = cycleLength - currentDayInCycle + 1;
+  const countEl = document.getElementById('cycle-countdown-text');
+  if (countEl) {
+    countEl.textContent = currentDayInCycle <= periodDuration ? 'Period in progress' : `Starts in ${daysUntilNext} day(s)`;
   }
 
+  const nextDate = new Date(todayClean.getTime() + daysUntilNext * 86400000);
+  const nextDateFormatted = nextDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const nextDateEl = document.getElementById('cycle-next-date');
+  if (nextDateEl) nextDateEl.textContent = nextDateFormatted;
+
+  const phaseBadge = document.getElementById('cycle-phase-badge');
+  if (phaseBadge) {
+    phaseBadge.textContent = phaseName;
+    phaseBadge.style.color = phaseColor;
+  }
   const phaseNameEl = document.getElementById('cycle-phase-name');
   if (phaseNameEl) {
     phaseNameEl.textContent = phaseName;
     phaseNameEl.style.color = phaseColor;
   }
 
-  const phaseBadgeEl = document.getElementById('cycle-phase-badge');
-  if (phaseBadgeEl) {
-    phaseBadgeEl.textContent = phaseName;
-    phaseBadgeEl.className = badgeClass;
-  }
-
-  // Estimated next start date
-  const cyclesCompleted = Math.floor(diffDays / cycleLen);
-  const nextEstimatedTimestamp = startDate.getTime() + (cyclesCompleted + 1) * cycleLen * 86400000;
-  const nextEstimatedDate = new Date(nextEstimatedTimestamp);
-  const nextDateFormatted = nextEstimatedDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-
-  const nextDateEl = document.getElementById('cycle-next-date');
-  if (nextDateEl) nextDateEl.textContent = nextDateFormatted;
-
-  // Phase Detail box
+  const phaseDetailTitle = document.getElementById('phase-detail-title');
+  if (phaseDetailTitle) phaseDetailTitle.textContent = phaseTitle;
+  const phaseDetailDesc = document.getElementById('phase-detail-desc');
+  if (phaseDetailDesc) phaseDetailDesc.textContent = phaseDesc;
   const phaseDot = document.getElementById('phase-color-dot');
   if (phaseDot) phaseDot.style.background = phaseColor;
 
-  const phaseTitleEl = document.getElementById('phase-detail-title');
-  if (phaseTitleEl) phaseTitleEl.textContent = phaseTitle;
-
-  const phaseDescEl = document.getElementById('phase-detail-desc');
-  if (phaseDescEl) phaseDescEl.textContent = phaseDesc;
-
-  // Timeline indicator needle
-  const timelineNeedle = document.getElementById('timeline-needle');
-  if (timelineNeedle) {
-    const percent = Math.min(Math.max(((cycleDay - 1) / cycleLen) * 100, 2), 98);
-    timelineNeedle.style.left = `${percent}%`;
+  const gaugeCircumference = 427.25;
+  const gaugeFraction = currentDayInCycle / cycleLength;
+  const gaugeFill = document.getElementById('cycle-gauge-fill');
+  if (gaugeFill) {
+    gaugeFill.style.strokeDashoffset = gaugeCircumference * (1 - gaugeFraction);
+    gaugeFill.style.stroke = phaseColor;
   }
 
-  // Smart HygieNet Pad Readiness Banner
+  const needle = document.getElementById('timeline-needle');
+  if (needle) {
+    needle.style.left = `${Math.min(gaugeFraction * 100, 98)}%`;
+  }
+
   const banner = document.getElementById('pad-readiness-banner');
   const readTitle = document.getElementById('readiness-title');
   const readDesc = document.getElementById('readiness-desc');
 
   if (banner && readTitle && readDesc) {
-    if (currentUserRemainingPads === 0) {
-      banner.classList.remove('ready');
-      readTitle.textContent = 'Pad Quota Fully Used (0 pads remaining)';
-      readDesc.textContent = `Your next cycle begins in ~${daysUntilNext} day(s), but your monthly quota is exhausted. Please contact your campus administrator for an allocation reload.`;
-    } else if (isPeriodActive) {
-      banner.classList.add('ready');
+    banner.classList.remove('urgent', 'ready');
+    if (currentDayInCycle <= periodDuration) {
+      banner.classList.add('urgent');
       readTitle.textContent = `Period Active — ${currentUserRemainingPads} Pad(s) Available in Quota`;
       readDesc.textContent = `Your cycle is currently active. You can dispense your remaining ${currentUserRemainingPads} pad(s) from the HygieNet machine whenever needed.`;
     } else if (daysUntilNext <= 3) {
@@ -958,14 +1868,7 @@ async function handleCycleSettingsSave(e) {
     showToast('Network error saving cycle settings', 'error');
   } finally {
     btn.disabled = false;
-    btn.innerHTML = `
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
-        <polyline points="17 21 17 13 7 13 7 21"></polyline>
-        <polyline points="7 3 7 8 15 8"></polyline>
-      </svg>
-      Save & Recalculate Cycle
-    `;
+    btn.innerHTML = `Save & Recalculate Cycle`;
   }
 }
 
@@ -1091,3 +1994,118 @@ function scrollChatToBottom() {
   }
 }
 
+// ------------------------------------------------------------
+//  LOCALHOST HARDWARE SIMULATOR (ZERO ARDUINO NEEDED)
+// ------------------------------------------------------------
+
+function initLocalDevBar() {
+  const isLocal = window.location.hostname === 'localhost' || 
+                  window.location.hostname === '127.0.0.1' || 
+                  window.location.hostname === '::1';
+  const bar = document.getElementById('localhost-dev-bar');
+  if (!bar) return;
+
+  if (isLocal) {
+    bar.style.display = 'block';
+  } else {
+    bar.style.display = 'none';
+  }
+}
+
+function toggleDevBar() {
+  const body = document.getElementById('dev-bar-body');
+  const btn = document.getElementById('btn-dev-toggle');
+  if (!body) return;
+
+  body.classList.toggle('hidden');
+  if (body.classList.contains('hidden')) {
+    if (btn) btn.textContent = '▲ Expand Simulator';
+  } else {
+    if (btn) btn.textContent = '▼ Collapse Simulator';
+  }
+}
+
+async function simVerifySelectedCard() {
+  const sel = document.getElementById('sim-card-select');
+  const uid = sel ? sel.value : 'C3:27:87:14';
+  const statusEl = document.getElementById('dev-sim-status');
+
+  statusEl.textContent = `[Simulating Uno R4 Card Tap] Querying /api/card/verify for ${uid}...`;
+
+  try {
+    const res = await fetch(`/api/card/verify?uid=${encodeURIComponent(uid)}`, {
+      headers: {
+        'X-Client': 'WebSimulator',
+        'X-Device-Key': 'hygienet_r4_sec_2026_x89'
+      }
+    });
+    const data = await res.json();
+    statusEl.textContent = `[Uno R4 Response] ${data.authorized ? '🟢 AUTHORIZED' : '🔴 DENIED'}: ${data.name || 'Unknown'} (Remaining: ${data.remaining} pads, Limit: ${data.monthly_limit})`;
+    showToast(`Simulator: ${data.name || uid} verified (${data.remaining} pads remaining)`, data.authorized ? 'success' : 'error');
+  } catch (err) {
+    statusEl.textContent = `[Simulator Error] Failed to contact local server: ${err.message}`;
+  }
+}
+
+async function simDispenseSelectedCard(qty = 1) {
+  const sel = document.getElementById('sim-card-select');
+  const uid = sel ? sel.value : 'C3:27:87:14';
+  const statusEl = document.getElementById('dev-sim-status');
+
+  statusEl.textContent = `[Simulating Dispenser Actuation] Sending /api/dispense/record for ${uid} (Qty: ${qty})...`;
+
+  try {
+    const res = await fetch('/api/dispense/record', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Client': 'WebSimulator',
+        'X-Device-Key': 'hygienet_r4_sec_2026_x89'
+      },
+      body: JSON.stringify({
+        uid: uid,
+        quantity: qty,
+        status: 'DISPENSED'
+      })
+    });
+    const data = await res.json();
+    if (data.success) {
+      statusEl.textContent = `[Dispenser Success] Motor pulsed! Delivered ${qty} pad(s). Remaining quota: ${data.remaining_after}. Hopper stock decremented.`;
+      showToast(`Simulator: Dispensed ${qty} pad(s) to ${uid}!`, 'success');
+      fetchHopperStock();
+      refreshCurrentView();
+    } else {
+      statusEl.textContent = `[Dispenser Error] ${data.message || 'Dispense denied'}`;
+      showToast(`Simulator Error: ${data.message}`, 'error');
+    }
+  } catch (err) {
+    statusEl.textContent = `[Simulator Error] ${err.message}`;
+  }
+}
+
+async function simTriggerHopperStockDrop() {
+  const statusEl = document.getElementById('dev-sim-status');
+  statusEl.textContent = '[Simulating Machine Stock Drop] Decrementing hopper stock by 1...';
+
+  try {
+    const res = await fetch('/api/dispense/record', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Client': 'WebSimulator',
+        'X-Device-Key': 'hygienet_r4_sec_2026_x89'
+      },
+      body: JSON.stringify({
+        uid: 'TEST:LOCAL:SIM',
+        quantity: 1,
+        status: 'MANUAL_TEST'
+      })
+    });
+    const data = await res.json();
+    statusEl.textContent = `[Hopper Decremented] Current hopper stock updated.`;
+    fetchHopperStock();
+    showToast('Simulator: Hopper stock decremented by 1', 'info');
+  } catch (e) {
+    statusEl.textContent = `[Simulator Error] ${e.message}`;
+  }
+}

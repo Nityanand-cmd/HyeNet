@@ -19,6 +19,60 @@ _db = None
 _is_connected = False
 _connection_error = None
 
+# ============================================================
+#  AADHAAR VERHOEFF CHECKSUM ALGORITHM & FORMATTING
+# ============================================================
+
+_verhoeff_d = [
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+    [1, 2, 3, 4, 0, 6, 7, 8, 9, 5],
+    [2, 3, 4, 0, 1, 7, 8, 9, 5, 6],
+    [3, 4, 0, 1, 2, 8, 9, 5, 6, 7],
+    [4, 0, 1, 2, 3, 9, 5, 6, 7, 8],
+    [5, 9, 8, 7, 6, 0, 4, 3, 2, 1],
+    [6, 5, 9, 8, 7, 1, 0, 4, 3, 2],
+    [7, 6, 5, 9, 8, 2, 1, 0, 4, 3],
+    [8, 7, 6, 5, 9, 3, 2, 1, 0, 4],
+    [9, 8, 7, 6, 5, 4, 3, 2, 1, 0]
+]
+
+_verhoeff_p = [
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+    [1, 5, 7, 6, 2, 8, 3, 0, 9, 4],
+    [5, 8, 0, 3, 7, 9, 6, 1, 4, 2],
+    [8, 9, 1, 6, 0, 4, 3, 5, 2, 7],
+    [9, 4, 5, 3, 1, 2, 6, 8, 7, 0],
+    [4, 2, 8, 6, 5, 7, 3, 9, 0, 1],
+    [2, 7, 9, 3, 8, 0, 6, 4, 1, 5],
+    [7, 0, 4, 6, 9, 1, 3, 2, 5, 8]
+]
+
+_verhoeff_inv = [0, 4, 3, 2, 1, 5, 6, 7, 8, 9]
+
+def validate_verhoeff(num_str: str) -> bool:
+    """
+    Validates a 12-digit number using UIDAI's Verhoeff checksum algorithm.
+    """
+    clean = "".join(filter(str.isdigit, str(num_str or "")))
+    if len(clean) != 12:
+        return False
+    c = 0
+    for i, digit in enumerate(reversed(clean)):
+        c = _verhoeff_d[c][_verhoeff_p[i % 8][int(digit)]]
+    return c == 0
+
+def format_aadhaar(num_str: str) -> str:
+    clean = "".join(filter(str.isdigit, str(num_str or "")))
+    if len(clean) == 12:
+        return f"{clean[:4]} {clean[4:8]} {clean[8:]}"
+    return clean
+
+def mask_aadhaar(num_str: str) -> str:
+    clean = "".join(filter(str.isdigit, str(num_str or "")))
+    if len(clean) == 12:
+        return f"XXXX-XXXX-{clean[8:]}"
+    return str(num_str or "")
+
 # Fallback in-memory store in case MongoDB Atlas credentials need updating
 _fallback_users = {
     "C3:27:87:14": {"name": "Sunita Yadav", "monthly_limit": 5, "used_pads": 0, "active": True},
@@ -208,20 +262,24 @@ def get_all_users():
         })
     return results
 
-def upsert_user(rfid_uid: str, name: str, monthly_limit: int = DEFAULT_MONTHLY_LIMIT):
+def upsert_user(rfid_uid: str, name: str, monthly_limit: int = DEFAULT_MONTHLY_LIMIT, aadhaar_no: str = ""):
     rfid_uid = rfid_uid.strip().upper()
+    clean_aadhaar = format_aadhaar(aadhaar_no) if aadhaar_no else ""
     db = get_db()
     if db is not None:
         try:
+            update_data = {
+                "name": name,
+                "monthly_limit": monthly_limit,
+                "active": True,
+                "updated_at": datetime.now(timezone.utc)
+            }
+            if clean_aadhaar:
+                update_data["aadhaar_no"] = clean_aadhaar
             result = db.users.update_one(
                 {"rfid_uid": rfid_uid},
                 {
-                    "$set": {
-                        "name": name,
-                        "monthly_limit": monthly_limit,
-                        "active": True,
-                        "updated_at": datetime.now(timezone.utc)
-                    },
+                    "$set": update_data,
                     "$setOnInsert": {
                         "used_pads": 0,
                         "created_at": datetime.now(timezone.utc)
@@ -237,12 +295,15 @@ def upsert_user(rfid_uid: str, name: str, monthly_limit: int = DEFAULT_MONTHLY_L
     if rfid_uid in _fallback_users:
         _fallback_users[rfid_uid]["name"] = name
         _fallback_users[rfid_uid]["monthly_limit"] = monthly_limit
+        if clean_aadhaar:
+            _fallback_users[rfid_uid]["aadhaar_no"] = clean_aadhaar
     else:
         _fallback_users[rfid_uid] = {
             "name": name,
             "monthly_limit": monthly_limit,
             "used_pads": 0,
-            "active": True
+            "active": True,
+            "aadhaar_no": clean_aadhaar
         }
     return True
 
@@ -274,20 +335,22 @@ def reset_user_monthly(uid: str):
         return True
     return False
 
-def update_user(uid: str, name: str, monthly_limit: int):
+def update_user(uid: str, name: str, monthly_limit: int, aadhaar_no: str = ""):
     uid = uid.strip().upper()
+    clean_aadhaar = format_aadhaar(aadhaar_no) if aadhaar_no else ""
     db = get_db()
     if db is not None:
         try:
+            set_fields = {
+                "name": name.strip(),
+                "monthly_limit": monthly_limit,
+                "updated_at": datetime.now(timezone.utc)
+            }
+            if clean_aadhaar:
+                set_fields["aadhaar_no"] = clean_aadhaar
             res = db.users.update_one(
                 {"rfid_uid": uid},
-                {
-                    "$set": {
-                        "name": name.strip(),
-                        "monthly_limit": monthly_limit,
-                        "updated_at": datetime.now(timezone.utc)
-                    }
-                }
+                {"$set": set_fields}
             )
             return res.matched_count > 0
         except Exception as e:
@@ -297,6 +360,8 @@ def update_user(uid: str, name: str, monthly_limit: int):
     if uid in _fallback_users:
         _fallback_users[uid]["name"] = name.strip()
         _fallback_users[uid]["monthly_limit"] = monthly_limit
+        if clean_aadhaar:
+            _fallback_users[uid]["aadhaar_no"] = clean_aadhaar
         return True
     return False
 
@@ -362,7 +427,7 @@ def record_dispense(uid: str, device_id: str, quantity: int):
             # Log transaction
             log_transaction(uid, user.get("name", "Unknown"), device_id, quantity, "DISPENSED", new_remaining)
 
-            # Update device statistics
+            # Update device statistics & decrement machine hopper inventory
             db.devices.update_one(
                 {"device_id": device_id},
                 {
@@ -371,13 +436,15 @@ def record_dispense(uid: str, device_id: str, quantity: int):
                 },
                 upsert=True
             )
+            update_hopper_stock(quantity, is_refill=False)
 
             return {
                 "success": True,
                 "user_name": user.get("name", "Unknown"),
                 "dispensed": quantity,
                 "used_pads": result["used_pads"],
-                "remaining": new_remaining
+                "remaining": new_remaining,
+                "remaining_after": new_remaining
             }
 
         except Exception as e:
@@ -400,13 +467,15 @@ def record_dispense(uid: str, device_id: str, quantity: int):
     user["used_pads"] += quantity
     new_remaining = monthly_limit - user["used_pads"]
     log_transaction(uid, user["name"], device_id, quantity, "DISPENSED", new_remaining)
+    update_hopper_stock(quantity, is_refill=False)
 
     return {
         "success": True,
         "user_name": user["name"],
         "dispensed": quantity,
         "used_pads": user["used_pads"],
-        "remaining": new_remaining
+        "remaining": new_remaining,
+        "remaining_after": new_remaining
     }
 
 def log_transaction(uid: str, name: str, device_id: str, quantity: int, status: str, remaining_after: int):
@@ -576,3 +645,514 @@ def get_dashboard_summary():
         "devices": [{"device_id": k, "status": v["status"], "is_active": True} for k, v in _fallback_devices.items()],
         "connection": get_connection_status()
     }
+
+# ============================================================
+#  MACHINE HOPPER INVENTORY & REFILL ATTENDANT LOGS
+# ============================================================
+
+_fallback_hopper = {
+    "device_id": "hygienet-01",
+    "location": "MMMUT Center #01",
+    "capacity": 50,
+    "current_stock": 42,
+    "status": "ONLINE",
+    "last_refilled": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+}
+_fallback_refill_logs = []
+
+def get_hopper_status():
+    db = get_db()
+    if db is not None:
+        try:
+            hopper = db.hopper.find_one({"device_id": "hygienet-01"})
+            if not hopper:
+                hopper = {
+                    "device_id": "hygienet-01",
+                    "location": "MMMUT Center #01",
+                    "capacity": 50,
+                    "current_stock": 42,
+                    "status": "ONLINE",
+                    "last_refilled": datetime.now(timezone.utc)
+                }
+                db.hopper.insert_one(hopper)
+            
+            cur = hopper.get("current_stock", 42)
+            stat = "REFILL_NEEDED" if cur <= 10 else "ONLINE"
+            if cur == 0:
+                stat = "EMPTY"
+
+            return {
+                "device_id": hopper.get("device_id", "hygienet-01"),
+                "location": hopper.get("location", "MMMUT Center #01"),
+                "capacity": hopper.get("capacity", 50),
+                "current_stock": cur,
+                "status": stat,
+                "last_refilled": str(hopper.get("last_refilled", ""))
+            }
+        except Exception as e:
+            print(f"[MongoDB Error] get_hopper_status: {e}")
+    return _fallback_hopper
+
+def update_hopper_stock(amount: int, is_refill: bool = False):
+    db = get_db()
+    if db is not None:
+        try:
+            if is_refill:
+                db.hopper.update_one(
+                    {"device_id": "hygienet-01"},
+                    {
+                        "$set": {
+                            "current_stock": amount,
+                            "last_refilled": datetime.now(timezone.utc),
+                            "status": "ONLINE"
+                        }
+                    },
+                    upsert=True
+                )
+            else:
+                db.hopper.update_one(
+                    {"device_id": "hygienet-01"},
+                    {"$inc": {"current_stock": -amount}},
+                    upsert=True
+                )
+            return get_hopper_status()
+        except Exception as e:
+            print(f"[MongoDB Error] update_hopper_stock: {e}")
+
+    if is_refill:
+        _fallback_hopper["current_stock"] = amount
+        _fallback_hopper["last_refilled"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    else:
+        _fallback_hopper["current_stock"] = max(0, _fallback_hopper["current_stock"] - amount)
+    _fallback_hopper["status"] = "REFILL_NEEDED" if _fallback_hopper["current_stock"] <= 10 else "ONLINE"
+    return _fallback_hopper
+
+def create_refill_log(attendant_name: str, quantity_added: int, photos: list, notes: str = ""):
+    db = get_db()
+    log_doc = {
+        "device_id": "hygienet-01",
+        "attendant_name": attendant_name or "Restock Attendant",
+        "quantity_added": int(quantity_added),
+        "photos": photos or [],
+        "notes": notes.strip(),
+        "status": "PENDING_VERIFICATION",
+        "timestamp": datetime.now(timezone.utc)
+    }
+
+    if db is not None:
+        try:
+            res = db.refill_logs.insert_one(log_doc)
+            log_doc["_id"] = str(res.inserted_id)
+            return {"success": True, "message": "Restock submission received! Awaiting admin photo verification.", "log": log_doc}
+        except Exception as e:
+            print(f"[MongoDB Error] create_refill_log: {e}")
+
+    # Fallback
+    log_doc["_id"] = str(len(_fallback_refill_logs) + 1)
+    log_doc["timestamp"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    _fallback_refill_logs.insert(0, log_doc)
+    return {"success": True, "message": "Restock submission logged for admin verification.", "log": log_doc}
+
+def get_refill_logs(status: str = None):
+    db = get_db()
+    if db is not None:
+        try:
+            query = {"status": status} if status else {}
+            cursor = db.refill_logs.find(query).sort("timestamp", pymongo.DESCENDING)
+            results = []
+            for doc in cursor:
+                doc["_id"] = str(doc.get("_id", ""))
+                doc["id"] = doc["_id"]
+                doc["staff_name"] = doc.get("staff_name") or doc.get("attendant_name", "Restock Attendant")
+                doc["remarks"] = doc.get("remarks") or doc.get("notes", "")
+                photos = doc.get("photos", [])
+                if photos:
+                    doc.setdefault("photo_hopper_base64", photos[0] if len(photos) > 0 else "")
+                    doc.setdefault("photo_tray_base64", photos[1] if len(photos) > 1 else "")
+                if isinstance(doc.get("timestamp"), datetime):
+                    doc["timestamp"] = doc["timestamp"].strftime("%Y-%m-%d %H:%M:%S")
+                results.append(doc)
+            return results
+        except Exception as e:
+            print(f"[MongoDB Error] get_refill_logs: {e}")
+    res = []
+    for r in _fallback_refill_logs:
+        if not status or r.get("status") == status:
+            r["id"] = r.get("_id")
+            r["staff_name"] = r.get("staff_name") or r.get("attendant_name", "Restock Attendant")
+            r["remarks"] = r.get("remarks") or r.get("notes", "")
+            photos = r.get("photos", [])
+            if photos:
+                r.setdefault("photo_hopper_base64", photos[0] if len(photos) > 0 else "")
+                r.setdefault("photo_tray_base64", photos[1] if len(photos) > 1 else "")
+            res.append(r)
+    return res
+
+def verify_refill_log(log_id: str, action: str = "approve"):
+    db = get_db()
+    from bson.objectid import ObjectId
+    if db is not None:
+        try:
+            log = db.refill_logs.find_one({"_id": ObjectId(log_id)})
+            if not log:
+                return {"success": False, "message": "Refill log not found"}
+            
+            if action == "approve":
+                # Set hopper stock to full capacity (50) or add quantity
+                new_stock = min(50, get_hopper_status()["current_stock"] + log.get("quantity_added", 50))
+                update_hopper_stock(new_stock, is_refill=True)
+
+                db.refill_logs.update_one(
+                    {"_id": ObjectId(log_id)},
+                    {"$set": {"status": "APPROVED", "verified_at": datetime.now(timezone.utc)}}
+                )
+                log_transaction("REFILL-CREW", log.get("attendant_name"), "hygienet-01", log.get("quantity_added", 50), "RESTOCKED_VERIFIED", new_stock)
+                return {"success": True, "message": f"Restock verified! Hopper stock updated to {new_stock} pads."}
+            else:
+                db.refill_logs.update_one(
+                    {"_id": ObjectId(log_id)},
+                    {"$set": {"status": "REJECTED", "verified_at": datetime.now(timezone.utc)}}
+                )
+                return {"success": True, "message": "Restock submission rejected."}
+        except Exception as e:
+            print(f"[MongoDB Error] verify_refill_log: {e}")
+
+    for r in _fallback_refill_logs:
+        if r.get("_id") == log_id:
+            if action == "approve":
+                r["status"] = "APPROVED"
+                new_stock = min(50, _fallback_hopper["current_stock"] + r.get("quantity_added", 50))
+                update_hopper_stock(new_stock, is_refill=True)
+                return {"success": True, "message": f"Restock verified! Hopper stock updated to {new_stock}."}
+            else:
+                r["status"] = "REJECTED"
+                return {"success": True, "message": "Restock rejected."}
+    return {"success": False, "message": "Log not found"}
+
+# ============================================================
+#  EMERGENCY PAD / QUOTA EXTENSION REQUESTS
+# ============================================================
+
+_fallback_emergency_requests = []
+
+def create_emergency_request(rfid_uid: str, reason: str = "Emergency pad needed on campus"):
+    user = get_user_by_uid(rfid_uid)
+    if not user:
+        return {"success": False, "message": "Beneficiary card UID not registered in system."}
+    
+    actual_uid = user.get("rfid_uid", rfid_uid)
+    db = get_db()
+    req_doc = {
+        "rfid_uid": actual_uid,
+        "user_name": user.get("name", "Beneficiary"),
+        "aadhaar_no": mask_aadhaar(user.get("aadhaar_no", "")),
+        "reason": reason.strip(),
+        "status": "PENDING",
+        "timestamp": datetime.now(timezone.utc)
+    }
+
+    if db is not None:
+        try:
+            existing = db.emergency_requests.find_one({"rfid_uid": actual_uid, "status": "PENDING"})
+            if existing:
+                return {"success": False, "message": "You already have an active emergency request pending approval."}
+            res = db.emergency_requests.insert_one(req_doc)
+            req_doc["_id"] = str(res.inserted_id)
+            return {"success": True, "message": "Emergency request submitted to campus administrator.", "request": req_doc}
+        except Exception as e:
+            print(f"[MongoDB Error] create_emergency_request: {e}")
+
+    for r in _fallback_emergency_requests:
+        if r.get("rfid_uid") == actual_uid and r.get("status") == "PENDING":
+            return {"success": False, "message": "Emergency request already pending."}
+    req_doc["_id"] = str(len(_fallback_emergency_requests) + 1)
+    req_doc["timestamp"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    _fallback_emergency_requests.insert(0, req_doc)
+    return {"success": True, "message": "Emergency request submitted.", "request": req_doc}
+
+def get_emergency_requests(status: str = None):
+    db = get_db()
+    if db is not None:
+        try:
+            query = {"status": status} if status else {}
+            cursor = db.emergency_requests.find(query).sort("timestamp", pymongo.DESCENDING)
+            results = []
+            for doc in cursor:
+                doc["_id"] = str(doc.get("_id", ""))
+                doc["id"] = doc["_id"]
+                if isinstance(doc.get("timestamp"), datetime):
+                    doc["timestamp"] = doc["timestamp"].strftime("%Y-%m-%d %H:%M:%S")
+                results.append(doc)
+            return results
+        except Exception as e:
+            print(f"[MongoDB Error] get_emergency_requests: {e}")
+    res = []
+    for r in _fallback_emergency_requests:
+        if not status or r.get("status") == status:
+            r["id"] = r.get("_id")
+            res.append(r)
+    return res
+
+def resolve_emergency_request(request_id: str, action: str = "approve", extra_pads: int = 1):
+    db = get_db()
+    from bson.objectid import ObjectId
+    if db is not None:
+        try:
+            req = db.emergency_requests.find_one({"_id": ObjectId(request_id)})
+            if not req:
+                return {"success": False, "message": "Request not found"}
+            if req.get("status") != "PENDING":
+                return {"success": False, "message": f"Request already {req.get('status')}"}
+            
+            uid = req.get("rfid_uid")
+            if action == "approve":
+                db.users.update_one({"rfid_uid": uid}, {"$inc": {"monthly_limit": extra_pads}})
+                db.emergency_requests.update_one(
+                    {"_id": ObjectId(request_id)},
+                    {"$set": {"status": "APPROVED", "pads_granted": extra_pads, "resolved_at": datetime.now(timezone.utc)}}
+                )
+                log_transaction(uid, req.get("user_name"), "ADMIN-OVERRIDE", extra_pads, "EMERGENCY_GRANTED", 0)
+                return {"success": True, "message": f"Approved +{extra_pads} emergency pad(s) for {req.get('user_name')}."}
+            else:
+                db.emergency_requests.update_one(
+                    {"_id": ObjectId(request_id)},
+                    {"$set": {"status": "REJECTED", "resolved_at": datetime.now(timezone.utc)}}
+                )
+                return {"success": True, "message": "Emergency request declined."}
+        except Exception as e:
+            print(f"[MongoDB Error] resolve_emergency_request: {e}")
+
+    for r in _fallback_emergency_requests:
+        if r.get("_id") == request_id:
+            if action == "approve":
+                r["status"] = "APPROVED"
+                r["pads_granted"] = extra_pads
+                if r.get("rfid_uid") in _fallback_users:
+                    _fallback_users[r.get("rfid_uid")]["monthly_limit"] += extra_pads
+                return {"success": True, "message": f"Approved +{extra_pads} emergency pad(s)."}
+            else:
+                r["status"] = "REJECTED"
+                return {"success": True, "message": "Request declined."}
+    return {"success": False, "message": "Request not found"}
+
+# ============================================================
+#  AADHAAR STUDENT REGISTRATION WITH OTP & CARD ALLOTMENT
+# ============================================================
+
+_fallback_registrations = []
+
+def create_registration_request(name: str, aadhaar_no: str, email: str):
+    import random
+    clean_aadhaar = "".join(filter(str.isdigit, str(aadhaar_no or "")))
+    if len(clean_aadhaar) != 12:
+        return {"success": False, "message": "Please enter a valid 12-digit Aadhaar number."}
+    
+    if not validate_verhoeff(clean_aadhaar):
+        return {"success": False, "message": "Invalid Aadhaar number (Verhoeff checksum verification failed)."}
+
+    otp = f"{random.randint(100000, 999999)}"
+    db = get_db()
+    req_doc = {
+        "name": name.strip(),
+        "aadhaar_no": format_aadhaar(clean_aadhaar),
+        "email": email.strip().lower(),
+        "otp": otp,
+        "status": "PENDING_OTP",
+        "created_at": datetime.now(timezone.utc)
+    }
+
+    if db is not None:
+        try:
+            existing_user = db.users.find_one({"aadhaar_no": format_aadhaar(clean_aadhaar)})
+            if existing_user:
+                return {"success": False, "message": f"Aadhaar {mask_aadhaar(clean_aadhaar)} is already registered with Card UID {existing_user.get('rfid_uid')}."}
+            
+            res = db.registration_requests.insert_one(req_doc)
+            req_id = str(res.inserted_id)
+            return {"success": True, "request_id": req_id, "otp": otp, "message": f"OTP sent to {email}"}
+        except Exception as e:
+            print(f"[MongoDB Error] create_registration_request: {e}")
+
+    req_id = str(len(_fallback_registrations) + 1)
+    req_doc["_id"] = req_id
+    _fallback_registrations.insert(0, req_doc)
+    return {"success": True, "request_id": req_id, "otp": otp, "message": f"OTP sent to {email}"}
+
+def verify_registration_otp(request_id: str, entered_otp: str):
+    db = get_db()
+    from bson.objectid import ObjectId
+    if db is not None:
+        try:
+            req = db.registration_requests.find_one({"_id": ObjectId(request_id)})
+            if not req:
+                return {"success": False, "message": "Registration request not found"}
+            if str(req.get("otp", "")).strip() != str(entered_otp or "").strip():
+                return {"success": False, "message": "Incorrect OTP. Please try again."}
+            
+            db.registration_requests.update_one(
+                {"_id": ObjectId(request_id)},
+                {"$set": {"status": "PENDING_ALLOTMENT", "verified_at": datetime.now(timezone.utc)}}
+            )
+            return {"success": True, "message": "Aadhaar verified! Request submitted for admin card allotment."}
+        except Exception as e:
+            print(f"[MongoDB Error] verify_registration_otp: {e}")
+
+    for r in _fallback_registrations:
+        if r.get("_id") == request_id:
+            if str(r.get("otp", "")).strip() == str(entered_otp or "").strip():
+                r["status"] = "PENDING_ALLOTMENT"
+                return {"success": True, "message": "Aadhaar verified! Request submitted for card allotment."}
+            return {"success": False, "message": "Incorrect OTP."}
+    return {"success": False, "message": "Request not found"}
+
+def get_pending_registrations():
+    db = get_db()
+    if db is not None:
+        try:
+            cursor = db.registration_requests.find({"status": {"$in": ["PENDING_ALLOTMENT", "OTP_VERIFIED"]}}).sort("created_at", pymongo.DESCENDING)
+            results = []
+            for doc in cursor:
+                doc["_id"] = str(doc.get("_id", ""))
+                doc["id"] = doc["_id"]
+                if isinstance(doc.get("created_at"), datetime):
+                    doc["created_at"] = doc["created_at"].strftime("%Y-%m-%d %H:%M:%S")
+                results.append(doc)
+            return results
+        except Exception as e:
+            print(f"[MongoDB Error] get_pending_registrations: {e}")
+    res = []
+    for r in _fallback_registrations:
+        if r.get("status") in ["PENDING_ALLOTMENT", "OTP_VERIFIED"]:
+            r["id"] = r.get("_id")
+            res.append(r)
+    return res
+
+def allot_rfid_card_to_student(request_id: str, rfid_uid: str, monthly_limit: int = DEFAULT_MONTHLY_LIMIT):
+    rfid_uid = rfid_uid.strip().upper()
+    db = get_db()
+    from bson.objectid import ObjectId
+    if db is not None:
+        try:
+            req = db.registration_requests.find_one({"_id": ObjectId(request_id)})
+            if not req:
+                return {"success": False, "message": "Registration request not found."}
+            
+            existing = db.users.find_one({"rfid_uid": rfid_uid})
+            if existing:
+                return {"success": False, "message": f"RFID Card UID {rfid_uid} is already allotted to {existing.get('name')}."}
+            
+            db.users.insert_one({
+                "rfid_uid": rfid_uid,
+                "name": req.get("name"),
+                "aadhaar_no": req.get("aadhaar_no"),
+                "email": req.get("email"),
+                "monthly_limit": monthly_limit,
+                "used_pads": 0,
+                "active": True,
+                "created_at": datetime.now(timezone.utc)
+            })
+
+            db.registration_requests.update_one(
+                {"_id": ObjectId(request_id)},
+                {"$set": {"status": "ALLOTTED", "allotted_uid": rfid_uid, "allotted_at": datetime.now(timezone.utc)}}
+            )
+
+            return {"success": True, "message": f"RFID Card {rfid_uid} allotted to {req.get('name')} successfully!"}
+        except Exception as e:
+            print(f"[MongoDB Error] allot_rfid_card_to_student: {e}")
+
+    for r in _fallback_registrations:
+        if r.get("_id") == request_id:
+            _fallback_users[rfid_uid] = {
+                "name": r.get("name"),
+                "aadhaar_no": r.get("aadhaar_no"),
+                "email": r.get("email"),
+                "monthly_limit": monthly_limit,
+                "used_pads": 0,
+                "active": True
+            }
+            r["status"] = "ALLOTTED"
+            r["allotted_uid"] = rfid_uid
+            return {"success": True, "message": f"RFID Card {rfid_uid} allotted to {r.get('name')}!"}
+    return {"success": False, "message": "Request not found"}
+
+# ============================================================
+#  MONTHLY DISPENSES BREAKDOWN & TEST ROLLOVER
+# ============================================================
+
+def get_monthly_dispense_summary():
+    """
+    Returns monthly statistics with Month Number and Name (e.g. Month 09 - September 2026).
+    """
+    db = get_db()
+    month_names = {
+        1: "January", 2: "February", 3: "March", 4: "April",
+        5: "May", 6: "June", 7: "July", 8: "August",
+        9: "September", 10: "October", 11: "November", 12: "December"
+    }
+
+    if db is not None:
+        try:
+            pipeline = [
+                {"$match": {"status": "DISPENSED"}},
+                {
+                    "$group": {
+                        "_id": {
+                            "year": {"$year": "$timestamp"},
+                            "month": {"$month": "$timestamp"}
+                        },
+                        "total_pads": {"$sum": "$quantity"},
+                        "transactions_count": {"$sum": 1},
+                        "beneficiaries": {"$addToSet": "$rfid_uid"}
+                    }
+                },
+                {"$sort": {"_id.year": -1, "_id.month": -1}}
+            ]
+            agg = list(db.transactions.aggregate(pipeline))
+            summary = []
+            for item in agg:
+                m_no = item["_id"]["month"]
+                year = item["_id"]["year"]
+                summary.append({
+                    "month_no": m_no,
+                    "month_name": month_names.get(m_no, str(m_no)),
+                    "year": year,
+                    "label": f"Month {m_no:02d} — {month_names.get(m_no, '')} {year}",
+                    "total_pads": item["total_pads"],
+                    "transactions_count": item["transactions_count"],
+                    "unique_beneficiaries": len(item.get("beneficiaries", []))
+                })
+            if not summary:
+                now = datetime.now()
+                summary.append({
+                    "month_no": now.month,
+                    "month_name": month_names[now.month],
+                    "year": now.year,
+                    "label": f"Month {now.month:02d} — {month_names[now.month]} {now.year}",
+                    "total_pads": 0,
+                    "transactions_count": 0,
+                    "unique_beneficiaries": 0
+                })
+            return summary
+        except Exception as e:
+            print(f"[MongoDB Error] get_monthly_dispense_summary: {e}")
+
+    now = datetime.now()
+    return [{
+        "month_no": now.month,
+        "month_name": month_names[now.month],
+        "year": now.year,
+        "label": f"Month {now.month:02d} — {month_names[now.month]} {now.year}",
+        "total_pads": sum(t.get("quantity", 0) for t in _fallback_transactions if t.get("status") == "DISPENSED"),
+        "transactions_count": len(_fallback_transactions),
+        "unique_beneficiaries": len(set(t.get("rfid_uid") for t in _fallback_transactions))
+    }]
+
+def simulate_month_rollover():
+    """
+    Simulates a new monthly cycle: resets used_pads to 0 for all users and logs the event.
+    """
+    reset_all_monthly()
+    log_transaction("SYSTEM", "Administrator", "hygienet-01", 0, "MONTHLY_ROLLOVER_SIMULATED", 0)
+    return {"success": True, "message": "Simulated new monthly cycle! All beneficiary pad quotas reset to 0 used."}
+

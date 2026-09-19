@@ -30,9 +30,10 @@ def push(token=None):
                 files_to_stage.append(p_str)
         if files_to_stage:
             repo.stage(files_to_stage)
+        msg = sys.argv[2] if len(sys.argv) > 2 else "feat: Aadhaar Verhoeff registration & OTP, restock staff portal with photo proofs, admin verification queues, hopper inventory, emergency pad request, and localhost hardware simulator"
         p.commit(
             repo,
-            message="feat: add menstrual period tracker, bilingual AI chatbot (HygieBot), and fix user login sync",
+            message=msg,
             author="Nityanand-cmd <nityanand@users.noreply.github.com>",
             committer="Nityanand-cmd <nityanand@users.noreply.github.com>"
         )
