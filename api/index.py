@@ -549,26 +549,43 @@ def get_user_transactions(uid):
     txs = db.get_user_transactions(uid, limit)
     return jsonify(txs)
 
+@app.route("/api/users/<path:uid>", methods=["PUT"])
 @app.route("/api/users/<uid>", methods=["PUT"])
-def update_user_details(uid):
+@app.route("/api/users/update", methods=["POST"])
+@app.route("/api/users/<path:uid>/update", methods=["POST"])
+@app.route("/api/users/<uid>/update", methods=["POST"])
+def update_user_details(uid=None):
+    import urllib.parse
     data = request.get_json(silent=True) or {}
+    raw_uid = data.get("rfid_uid") or uid or ""
+    clean_uid = urllib.parse.unquote(str(raw_uid)).strip().upper()
     name = data.get("name", "").strip()
     limit = int(data.get("monthly_limit", DEFAULT_MONTHLY_LIMIT))
     aadhaar = data.get("aadhaar_no", "").strip()
     
-    if not name:
-        return jsonify({"success": False, "message": "Name cannot be empty."}), 400
+    if not clean_uid or not name:
+        return jsonify({"success": False, "message": "UID and Name are required."}), 400
         
-    ok = db.update_user(uid, name, limit, aadhaar)
+    ok = db.update_user(clean_uid, name, limit, aadhaar)
     if ok:
         return jsonify({"success": True, "message": f"Beneficiary {name} updated successfully."})
     return jsonify({"success": False, "message": "Failed to update beneficiary."}), 400
 
+@app.route("/api/users/<path:uid>", methods=["DELETE"])
 @app.route("/api/users/<uid>", methods=["DELETE"])
-def delete_user_record(uid):
-    ok = db.delete_user(uid)
+@app.route("/api/users/delete", methods=["POST"])
+@app.route("/api/users/<path:uid>/delete", methods=["POST"])
+@app.route("/api/users/<uid>/delete", methods=["POST"])
+def delete_user_record(uid=None):
+    import urllib.parse
+    data = request.get_json(silent=True) or {}
+    raw_uid = data.get("rfid_uid") or uid or ""
+    clean_uid = urllib.parse.unquote(str(raw_uid)).strip().upper()
+    if not clean_uid:
+        return jsonify({"success": False, "message": "UID is required."}), 400
+    ok = db.delete_user(clean_uid)
     if ok:
-        return jsonify({"success": True, "message": f"Beneficiary card {uid} deleted successfully."})
+        return jsonify({"success": True, "message": f"Beneficiary card {clean_uid} deleted successfully."})
     return jsonify({"success": False, "message": "Beneficiary not found or could not be deleted."}), 404
 
 # ============================================================
@@ -625,6 +642,21 @@ def verify_refill(id):
     action = data.get("action", "approve").lower()
     res = db.verify_refill_log(id, action)
     return jsonify(res)
+
+@app.route("/api/admin/refills/<id>", methods=["DELETE"])
+@app.route("/api/admin/refills/<id>/delete", methods=["POST"])
+def delete_refill_route(id):
+    ok = db.delete_refill_log(id)
+    if ok:
+        return jsonify({"success": True, "message": "Restock submission deleted."})
+    return jsonify({"success": False, "message": "Restock submission not found."}), 404
+
+@app.route("/api/admin/refills/clear", methods=["POST"])
+def clear_refills_route():
+    ok = db.clear_all_refill_logs()
+    if ok:
+        return jsonify({"success": True, "message": "All restock submissions cleared."})
+    return jsonify({"success": False, "message": "Failed to clear restock submissions."}), 500
 
 @app.route("/api/user/emergency-request", methods=["POST"])
 def submit_emergency_request():

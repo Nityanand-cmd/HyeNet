@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=3.2">
+  <link rel="stylesheet" href="style.css?v=3.3">
 </head>
 <body>
   <!-- Ambient background glow effects -->
@@ -295,7 +295,10 @@
                   <span class="queue-dot orange"></span>
                   <h4>Pending Refill Proofs</h4>
                 </div>
-                <span class="badge badge-warn" id="badge-pending-refills-count">0</span>
+                <div style="display:flex; align-items:center; gap:6px;">
+                  <button class="btn btn-secondary btn-sm" style="padding: 2px 8px; font-size: 11px;" onclick="handleClearAllRefills()" title="Clear all restock submissions">Clear All</button>
+                  <span class="badge badge-warn" id="badge-pending-refills-count">0</span>
+                </div>
               </div>
               <p class="queue-desc">Review uploaded photo proofs of machine hopper replenishment before crediting stock.</p>
               <div class="queue-items-container" id="admin-refill-requests-list">
@@ -1220,6 +1223,6 @@
   <!-- Toast Notification Container -->
   <div class="toast-container" id="toast-container"></div>
 
-  <script src="app.js?v=3.2"></script>
+  <script src="app.js?v=3.3"></script>
 </body>
 </html>

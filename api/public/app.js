@@ -731,9 +731,9 @@ function renderAdminUsers(users, defaultLimit = 5) {
         <td>${statusBadge}</td>
         <td class="text-right">
           <div class="action-btn-group">
-            <button class="btn-table-action" onclick="openEditUserModal('${escapeHtml(u.rfid_uid)}', '${escapeHtml(u.name)}', ${limit}, '${escapeHtml(u.aadhaar_no || '')}')" title="Edit Name or Base Quota">Edit</button>
+            <button class="btn-table-action" onclick="openEditUserModal('${escapeHtml(u.rfid_uid)}')" title="Edit Name, Aadhaar or Base Quota">Edit</button>
             <button class="btn-table-action" onclick="resetSingleUser('${escapeHtml(u.rfid_uid)}')" title="Reset used pads to 0 and clear temporary emergency grant">Reset</button>
-            <button class="btn-table-action btn-del" onclick="deleteUser('${escapeHtml(u.rfid_uid)}', '${escapeHtml(u.name)}')" title="Delete Card">Delete</button>
+            <button class="btn-table-action btn-del" onclick="deleteUser('${escapeHtml(u.rfid_uid)}')" title="Delete Card">Delete</button>
           </div>
         </td>
       </tr>
@@ -844,6 +844,14 @@ function openAddUserModal() {
 }
 
 function openEditUserModal(uid, name, limit, aadhaar) {
+  if (cachedUsers && (!name || !limit)) {
+    const found = cachedUsers.find(x => x.rfid_uid === uid);
+    if (found) {
+      name = found.name;
+      limit = found.monthly_limit || 5;
+      aadhaar = found.aadhaar_no || '';
+    }
+  }
   document.getElementById('modal-title').textContent = 'Edit Beneficiary Details & Quota';
   document.getElementById('form-is-edit').value = '1';
   document.getElementById('form-name').value = name || '';
@@ -854,8 +862,10 @@ function openEditUserModal(uid, name, limit, aadhaar) {
   document.getElementById('btn-modal-save').textContent = 'Update Beneficiary';
   
   const aadhaarInput = document.getElementById('form-aadhaar');
-  aadhaarInput.value = aadhaar || '';
-  formatAndValidateAadhaar(aadhaarInput, 'form-aadhaar-feedback');
+  if (aadhaarInput) {
+    aadhaarInput.value = aadhaar || '';
+    formatAndValidateAadhaar(aadhaarInput, 'form-aadhaar-feedback');
+  }
 
   document.getElementById('user-modal').classList.remove('hidden');
 }
@@ -870,14 +880,14 @@ async function handleUserSubmit(e) {
   const uid = document.getElementById('form-uid').value.trim().toUpperCase();
   const name = document.getElementById('form-name').value.trim();
   const limit = parseInt(document.getElementById('form-limit').value, 10) || 5;
-  const aadhaar = document.getElementById('form-aadhaar').value.replace(/\D/g, '');
+  const aadhaar = document.getElementById('form-aadhaar') ? document.getElementById('form-aadhaar').value.replace(/\D/g, '') : '';
 
   if (!uid || !name) {
     showToast('Name and RFID UID are required.', 'error');
     return;
   }
 
-  if (aadhaar && !validateVerhoeff(aadhaar)) {
+  if (aadhaar && aadhaar.length === 12 && !validateVerhoeff(aadhaar)) {
     showToast('Invalid 12-digit Aadhaar number (Verhoeff checksum failed).', 'error');
     return;
   }
@@ -888,17 +898,29 @@ async function handleUserSubmit(e) {
 
   try {
     let res;
+    const payload = { rfid_uid: uid, name: name, monthly_limit: limit, aadhaar_no: aadhaar };
     if (isEdit) {
-      res = await fetch(`/api/users/${encodeURIComponent(uid)}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name, monthly_limit: limit, aadhaar_no: aadhaar })
-      });
+      try {
+        res = await fetch(`/api/users/${encodeURIComponent(uid)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+      } catch (err) {
+        res = null;
+      }
+      if (!res || !res.ok) {
+        res = await fetch('/api/users/update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+      }
     } else {
       res = await fetch('/api/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rfid_uid: uid, name: name, monthly_limit: limit, aadhaar_no: aadhaar })
+        body: JSON.stringify(payload)
       });
     }
 
@@ -921,14 +943,32 @@ async function handleUserSubmit(e) {
 
 async function deleteUser(uid, name) {
   const cleanUid = (uid || '').trim().toUpperCase();
-  if (!confirm(`Are you sure you want to delete beneficiary "${name}" (UID: ${cleanUid})?\nThis will remove their card registration from the system.`)) {
+  if (!name && cachedUsers) {
+    const found = cachedUsers.find(x => x.rfid_uid === cleanUid);
+    if (found) name = found.name;
+  }
+  if (!confirm(`Are you sure you want to delete beneficiary "${name || cleanUid}" (UID: ${cleanUid})?\nThis will remove their card registration from the system.`)) {
     return;
   }
 
   try {
-    const res = await fetch(`/api/users/${encodeURIComponent(cleanUid)}`, {
-      method: 'DELETE'
-    });
+    let res;
+    try {
+      res = await fetch(`/api/users/${encodeURIComponent(cleanUid)}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rfid_uid: cleanUid })
+      });
+    } catch (err) {
+      res = null;
+    }
+    if (!res || !res.ok) {
+      res = await fetch('/api/users/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rfid_uid: cleanUid })
+      });
+    }
     const data = await res.json();
     if (data.success) {
       showToast(data.message || `Deleted card ${cleanUid}.`, 'success');
@@ -958,7 +998,7 @@ async function resetSingleUser(uid) {
       showToast(data.message || `Reset quota for card ${cleanUid}.`, 'success');
       await fetchAdminDashboardData();
     } else {
-      showToast(data.message || 'Could not reset quota.', 'error');
+      showToast(data.message || 'Failed to reset quota.', 'error');
     }
   } catch (err) {
     showToast('Network error resetting quota.', 'error');
@@ -1036,6 +1076,9 @@ async function fetchAdminRefillRequests() {
             <button class="btn btn-danger-subtle btn-sm" onclick="handleVerifyRefill('${r.id}', 'reject')">
               ✕ Reject
             </button>
+            <button class="btn btn-danger-subtle btn-sm" onclick="handleDeleteRefill('${r.id}')" title="Permanently delete this refill submission">
+              🗑 Delete
+            </button>
           </div>
         </div>
       `;
@@ -1063,6 +1106,44 @@ async function handleVerifyRefill(refillId, action) {
     }
   } catch (e) {
     showToast('Network error updating refill log', 'error');
+  }
+}
+
+async function handleDeleteRefill(refillId) {
+  if (!confirm('Are you sure you want to delete this restock submission?')) {
+    return;
+  }
+  try {
+    const res = await fetch(`/api/admin/refills/${encodeURIComponent(refillId)}/delete`, {
+      method: 'POST'
+    }).then(r => r.json());
+    if (res.success) {
+      showToast('Restock submission deleted.', 'success');
+      fetchAdminRefillRequests();
+      if (typeof fetchRefillStaffData === 'function') fetchRefillStaffData();
+    } else {
+      showToast(res.message || 'Could not delete restock submission.', 'error');
+    }
+  } catch (err) {
+    showToast('Network error deleting restock submission.', 'error');
+  }
+}
+
+async function handleClearAllRefills() {
+  if (!confirm('Are you sure you want to delete ALL restock submissions? This cannot be undone.')) {
+    return;
+  }
+  try {
+    const res = await fetch('/api/admin/refills/clear', { method: 'POST' }).then(r => r.json());
+    if (res.success) {
+      showToast('All restock submissions deleted.', 'success');
+      fetchAdminRefillRequests();
+      if (typeof fetchRefillStaffData === 'function') fetchRefillStaffData();
+    } else {
+      showToast(res.message || 'Failed to clear restocks.', 'error');
+    }
+  } catch (err) {
+    showToast('Network error clearing restock submissions.', 'error');
   }
 }
 
@@ -1579,7 +1660,10 @@ async function fetchRefillStaffData() {
         <div class="refill-log-item">
           <div class="refill-log-top">
             <strong>+${l.quantity_added} Pads (${escapeHtml(l.staff_name)})</strong>
-            <span class="badge ${badgeClass}">${statusText}</span>
+            <div style="display:flex; align-items:center; gap:6px;">
+              <span class="badge ${badgeClass}">${statusText}</span>
+              <button class="btn-table-action btn-del" style="padding:2px 6px; font-size:11px;" onclick="handleDeleteRefill('${l.id}')" title="Delete submission">🗑</button>
+            </div>
           </div>
           <div style="font-size: 11px; color: var(--text-dim);">
             <span>Remarks: "${escapeHtml(l.remarks || 'Restocked')}"</span> • <span>${escapeHtml(l.timestamp || '')}</span>
@@ -1661,151 +1745,7 @@ function openImageLightbox(src, caption) {
 }
 
 function closeImageLightbox(event) {
-  const modal = document.getElementById('image-lightbox-modal');
-  if (modal) modal.classList.add('hidden');
-}
-
-// ------------------------------------------------------------
-//  BENEFICIARY MANAGEMENT (ADD, EDIT, DELETE, RESET)
-// ------------------------------------------------------------
-
-function openAddUserModal() {
-  document.getElementById('user-form').reset();
-  document.getElementById('form-is-edit').value = '0';
-  document.getElementById('modal-title').textContent = 'Register Beneficiary Card';
-  document.getElementById('btn-modal-save').textContent = 'Register Card';
-  
-  const uidInput = document.getElementById('form-uid');
-  uidInput.readOnly = false;
-  uidInput.classList.remove('readonly-input');
-  document.getElementById('form-uid-hint').textContent = 'Format: 8-10 hex characters (colons optional)';
-  
-  const feedback = document.getElementById('form-aadhaar-feedback');
-  if (feedback) {
-    feedback.className = 'aadhaar-feedback';
-    feedback.innerHTML = '<span class="indicator-icon">ℹ️</span><span class="indicator-text">Verhoeff checksum checked on entry</span>';
-  }
-
-  document.getElementById('user-modal').classList.remove('hidden');
-}
-
-function openEditUserModal(uid, name, limit, aadhaar) {
-  document.getElementById('form-is-edit').value = '1';
-  document.getElementById('modal-title').textContent = `Edit Beneficiary (${uid})`;
-  document.getElementById('btn-modal-save').textContent = 'Save Changes';
-  
-  document.getElementById('form-name').value = name;
-  const uidInput = document.getElementById('form-uid');
-  uidInput.value = uid;
-  uidInput.readOnly = true;
-  document.getElementById('form-uid-hint').textContent = 'Card UID cannot be changed while editing.';
-  document.getElementById('form-limit').value = limit || 5;
-
-  const aadhaarInput = document.getElementById('form-aadhaar');
-  if (aadhaarInput) {
-    aadhaarInput.value = aadhaar || '';
-    formatAndValidateAadhaar(aadhaarInput, 'form-aadhaar-feedback');
-  }
-
-  document.getElementById('user-modal').classList.remove('hidden');
-}
-
-function closeUserModal() {
-  document.getElementById('user-modal').classList.add('hidden');
-}
-
-async function handleUserSubmit(e) {
-  e.preventDefault();
-  const isEdit = document.getElementById('form-is-edit').value === '1';
-  const name = document.getElementById('form-name').value.trim();
-  const uid = document.getElementById('form-uid').value.trim().toUpperCase();
-  const limit = parseInt(document.getElementById('form-limit').value, 10);
-  const aadhaar = document.getElementById('form-aadhaar') ? document.getElementById('form-aadhaar').value.replace(/\D/g, '') : '';
-
-  if (aadhaar && aadhaar.length === 12 && !validateVerhoeff(aadhaar)) {
-    showToast('Invalid Aadhaar number (Verhoeff checksum failed)', 'error');
-    return;
-  }
-
-  try {
-    let res;
-    if (isEdit) {
-      res = await fetch(`/api/users/${encodeURIComponent(uid)}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name, monthly_limit: limit, aadhaar_no: aadhaar })
-      });
-    } else {
-      res = await fetch('/api/users', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rfid_uid: uid, name: name, monthly_limit: limit, aadhaar_no: aadhaar })
-      });
-    }
-
-    const data = await res.json();
-    if (data.success) {
-      showToast(data.message, 'success');
-      closeUserModal();
-      fetchAdminDashboardData();
-    } else {
-      showToast(data.message || 'Operation failed', 'error');
-    }
-  } catch (err) {
-    showToast('Network error saving beneficiary', 'error');
-  }
-}
-
-async function deleteUser(uid, name) {
-  if (!confirm(`Are you sure you want to delete beneficiary "${name}" (${uid})? This cannot be undone.`)) {
-    return;
-  }
-
-  try {
-    const res = await fetch(`/api/users/${encodeURIComponent(uid)}`, {
-      method: 'DELETE'
-    });
-    const data = await res.json();
-    if (data.success) {
-      showToast(data.message, 'success');
-      fetchAdminDashboardData();
-    } else {
-      showToast(data.message || 'Failed to delete user', 'error');
-    }
-  } catch (err) {
-    showToast('Network error deleting user', 'error');
-  }
-}
-
-async function resetSingleUser(uid) {
-  if (!confirm(`Reset monthly pad usage to 0 for card ${uid}?`)) return;
-
-  try {
-    const res = await fetch('/api/users/reset', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rfid_uid: uid })
-    });
-    const data = await res.json();
-    showToast(data.message, 'success');
-    fetchAdminDashboardData();
-  } catch (err) {
-    showToast('Failed to reset quota', 'error');
-  }
-}
-
-async function confirmResetAll() {
-  if (!confirm('Are you sure you want to reset the monthly pad usage to 0 for ALL registered beneficiaries?')) return;
-
-  try {
-    const res = await fetch('/api/users/reset', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({})
-    });
-    const data = await res.json();
-    showToast(data.message, 'success');
-    fetchAdminDashboardData();
+  const modal = document.getElementById('imag
   } catch (err) {
     showToast('Failed to reset quotas', 'error');
   }

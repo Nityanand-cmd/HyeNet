@@ -322,65 +322,92 @@ def reset_all_monthly():
     return True
 
 def reset_user_monthly(uid: str):
-    uid = uid.strip().upper()
+    import urllib.parse
+    raw = urllib.parse.unquote(str(uid)).strip().upper()
+    norm = normalize_uid(raw)
     db = get_db()
     if db is not None:
         try:
-            db.users.update_one({"rfid_uid": uid}, {"$set": {"used_pads": 0, "emergency_extra_pads": 0}})
-            return True
+            res = db.users.update_one(
+                {"$or": [{"rfid_uid": raw}, {"rfid_uid": norm}]},
+                {"$set": {"used_pads": 0, "emergency_extra_pads": 0, "updated_at": datetime.now(timezone.utc)}}
+            )
+            return res.matched_count > 0
         except Exception as e:
             print(f"[MongoDB Error] reset_user_monthly: {e}")
 
-    if uid in _fallback_users:
-        _fallback_users[uid]["used_pads"] = 0
-        _fallback_users[uid]["emergency_extra_pads"] = 0
-        return True
+    for k in (raw, norm):
+        if k in _fallback_users:
+            _fallback_users[k]["used_pads"] = 0
+            _fallback_users[k]["emergency_extra_pads"] = 0
+            return True
     return False
 
 def update_user(uid: str, name: str, monthly_limit: int, aadhaar_no: str = ""):
-    uid = uid.strip().upper()
+    import urllib.parse
+    raw = urllib.parse.unquote(str(uid)).strip().upper()
+    norm = normalize_uid(raw)
     clean_aadhaar = format_aadhaar(aadhaar_no) if aadhaar_no else ""
     db = get_db()
     if db is not None:
         try:
             set_fields = {
                 "name": name.strip(),
-                "monthly_limit": monthly_limit,
+                "monthly_limit": int(monthly_limit),
                 "updated_at": datetime.now(timezone.utc)
             }
             if clean_aadhaar:
                 set_fields["aadhaar_no"] = clean_aadhaar
+            
             res = db.users.update_one(
-                {"rfid_uid": uid},
+                {"$or": [{"rfid_uid": raw}, {"rfid_uid": norm}]},
                 {"$set": set_fields}
             )
-            return res.matched_count > 0
+            if res.matched_count > 0:
+                return True
+            
+            # Fallback search by get_user_by_uid
+            user = get_user_by_uid(raw)
+            if user and "_id" in user:
+                res2 = db.users.update_one({"_id": user["_id"]}, {"$set": set_fields})
+                return res2.matched_count > 0
+            return False
         except Exception as e:
             print(f"[MongoDB Error] update_user: {e}")
             return False
 
-    if uid in _fallback_users:
-        _fallback_users[uid]["name"] = name.strip()
-        _fallback_users[uid]["monthly_limit"] = monthly_limit
-        if clean_aadhaar:
-            _fallback_users[uid]["aadhaar_no"] = clean_aadhaar
-        return True
+    for k in (raw, norm):
+        if k in _fallback_users:
+            _fallback_users[k]["name"] = name.strip()
+            _fallback_users[k]["monthly_limit"] = int(monthly_limit)
+            if clean_aadhaar:
+                _fallback_users[k]["aadhaar_no"] = clean_aadhaar
+            return True
     return False
 
 def delete_user(uid: str):
-    uid = uid.strip().upper()
+    import urllib.parse
+    raw = urllib.parse.unquote(str(uid)).strip().upper()
+    norm = normalize_uid(raw)
     db = get_db()
     if db is not None:
         try:
-            res = db.users.delete_one({"rfid_uid": uid})
-            return res.deleted_count > 0
+            res = db.users.delete_one({"$or": [{"rfid_uid": raw}, {"rfid_uid": norm}]})
+            if res.deleted_count > 0:
+                return True
+            user = get_user_by_uid(raw)
+            if user and "_id" in user:
+                res2 = db.users.delete_one({"_id": user["_id"]})
+                return res2.deleted_count > 0
+            return False
         except Exception as e:
             print(f"[MongoDB Error] delete_user: {e}")
             return False
 
-    if uid in _fallback_users:
-        del _fallback_users[uid]
-        return True
+    for k in (raw, norm):
+        if k in _fallback_users:
+            del _fallback_users[k]
+            return True
     return False
 
 
@@ -836,6 +863,38 @@ def verify_refill_log(log_id: str, action: str = "approve"):
                 r["status"] = "REJECTED"
                 return {"success": True, "message": "Restock rejected."}
     return {"success": False, "message": "Log not found"}
+
+def delete_refill_log(log_id: str):
+    db = get_db()
+    from bson.objectid import ObjectId
+    if db is not None:
+        try:
+            query = {"_id": ObjectId(log_id)} if ObjectId.is_valid(log_id) else {"_id": log_id}
+            res = db.refill_logs.delete_one(query)
+            return res.deleted_count > 0
+        except Exception as e:
+            print(f"[MongoDB Error] delete_refill_log: {e}")
+            return False
+
+    global _fallback_refill_logs
+    before_len = len(_fallback_refill_logs)
+    _fallback_refill_logs = [r for r in _fallback_refill_logs if str(r.get("_id")) != str(log_id) and str(r.get("id")) != str(log_id)]
+    return len(_fallback_refill_logs) < before_len
+
+def clear_all_refill_logs():
+    db = get_db()
+    if db is not None:
+        try:
+            db.refill_logs.delete_many({})
+            return True
+        except Exception as e:
+            print(f"[MongoDB Error] clear_all_refill_logs: {e}")
+            return False
+
+    global _fallback_refill_logs
+    _fallback_refill_logs = []
+    return True
+
 
 # ============================================================
 #  EMERGENCY PAD / QUOTA EXTENSION REQUESTS
